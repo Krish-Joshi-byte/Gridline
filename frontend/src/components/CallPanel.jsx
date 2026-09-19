@@ -31,11 +31,11 @@ function estimateEtaMinutes(unit, call) {
   return Math.max(1, Math.round((distKm / AVG_URBAN_SPEED_KMH) * 60));
 }
 
-export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onLiveTranscript, onDispatchUnits, onSendMessage }) {
+export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onLiveTranscript, onDispatchUnits }) {
   const [connected, setConnected] = useState(0);
   const [selected, setSelected] = useState(new Set());
   const [voiceError, setVoiceError] = useState(null);
-  const [takenOver, setTakenOver] = useState(false);
+  const [hadVoiceCall, setHadVoiceCall] = useState(false);
   const [manualText, setManualText] = useState('');
   const scrollRef = useRef(null);
 
@@ -46,7 +46,7 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
   // onLiveTranscript; ElevenLabs' own post-call webhook fills in the AI
   // call notes below once the conversation ends.
   const conversation = useConversation({
-    onConnect: () => setVoiceError(null),
+    onConnect: () => { setVoiceError(null); setHadVoiceCall(true); },
     onMessage: (msg) => {
       const text = msg?.message ?? '';
       if (!text) return;
@@ -59,7 +59,7 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
     setConnected(0);
     setSelected(new Set());
     setVoiceError(null);
-    setTakenOver(false);
+    setHadVoiceCall(false);
     setManualText('');
     const t = setInterval(() => setConnected(c => c + 1), 1000);
     // Hang up any live voice session when switching to a different call
@@ -73,7 +73,6 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
 
   async function startVoiceCall() {
     setVoiceError(null);
-    setTakenOver(false);
     try {
       const session = await getElevenLabsSession();
       const startOpts = session.signed_url
@@ -93,35 +92,19 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
     }
   }
 
-  function endVoiceCall() {
+  // Operator takeover: cuts the AI's mic and voice off entirely so a
+  // human dispatcher can carry on the same call themselves. There's no
+  // "un-take-over" — you either let the AI run the call or a person
+  // does, never both at once.
+  function takeOverCall() {
     conversation.endSession().catch(() => {});
-    setTakenOver(false);
   }
 
-  // Cuts the AI's mic and voice off entirely, without ending the call —
-  // the dispatcher stays on the line and keeps logging the conversation
-  // manually via the free-text box below. Since this browser-only setup
-  // stands in for the caller's side rather than bridging a real phone
-  // line, "taking over" means the dispatcher now drives the transcript
-  // directly instead of the AI doing it.
-  function takeOverFromAI() {
-    if (conversation.status === 'connected') {
-      conversation.endSession().catch(() => {});
-    }
-    setVoiceError(null);
-    setTakenOver(true);
-  }
-
-  async function resumeAI() {
-    setTakenOver(false);
-    await startVoiceCall();
-  }
-
-  function submitManualMessage(e) {
+  function sendManualMessage(e) {
     e.preventDefault();
     const text = manualText.trim();
     if (!text) return;
-    onSendMessage(text);
+    onLiveTranscript({ from: 'dispatcher', text });
     setManualText('');
   }
 
@@ -178,48 +161,31 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
 
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
           {conversation.status === 'connected' ? (
+            <button
+              onClick={takeOverCall}
+              title="Ends the AI's mic and voice — you'll continue the call yourself"
+              style={{
+                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
+                background: 'transparent', color: 'var(--danger, #e5484d)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+              }}
+            >🧑‍✈️ Take over from AI {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
+          ) : (
             <>
               <button
-                onClick={takeOverFromAI}
+                onClick={startVoiceCall}
+                disabled={conversation.status === 'connecting'}
                 style={{
-                  flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--warning, #f0b429)',
-                  background: 'transparent', color: 'var(--warning, #f0b429)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+                  flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
+                  background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
+                  cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
                 }}
-              >🧑‍✈️ Take over from AI {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
-              <button
-                onClick={endVoiceCall}
-                title="End call"
-                style={{
-                  width: 32, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
-                  background: 'transparent', color: 'var(--danger, #e5484d)', fontSize: 13, cursor: 'pointer', flexShrink: 0
-                }}
-              >✕</button>
+              >🎙 {conversation.status === 'connecting' ? 'Connecting…' : (hadVoiceCall ? 'Resume AI on this call' : 'Start voice call')}</button>
             </>
-          ) : takenOver ? (
-            <button
-              onClick={resumeAI}
-              disabled={conversation.status === 'connecting'}
-              style={{
-                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
-                background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
-                cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
-              }}
-            >🔁 {conversation.status === 'connecting' ? 'Reconnecting…' : 'Resume AI on this call'}</button>
-          ) : (
-            <button
-              onClick={startVoiceCall}
-              disabled={conversation.status === 'connecting'}
-              style={{
-                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
-                background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
-                cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
-              }}
-            >🎙 {conversation.status === 'connecting' ? 'Connecting…' : 'Start voice call'}</button>
           )}
         </div>
-        {takenOver && (
-          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--warning, #f0b429)' }}>
-            You've taken over — the AI is off the line. Type your responses below.
+        {hadVoiceCall && conversation.status !== 'connected' && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-muted)' }}>
+            You've taken over — the AI is off the line. Talk to the caller directly and log it below, or resume the AI above.
           </div>
         )}
         {voiceError && (
@@ -241,51 +207,50 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         ))}
       </div>
 
-      {/* free-text line — available whenever the AI isn't actively live,
-          so the dispatcher can type instead of only clicking scripted
-          questions (this is also how a takeover keeps going after the
-          AI's mic is cut) */}
-      {conversation.status !== 'connected' && (
-        <form onSubmit={submitManualMessage} style={{ display: 'flex', gap: 6, padding: '0 14px 10px' }}>
-          <input
-            value={manualText}
-            onChange={e => setManualText(e.target.value)}
-            placeholder={takenOver ? 'Type what you\'re telling the caller…' : 'Say something to the caller…'}
-            style={{
-              flex: 1, background: 'var(--surface-2)', border: '1px solid var(--line-strong)',
-              borderRadius: 8, padding: '8px 10px', color: 'var(--ink)', fontSize: 12.5, outline: 'none'
-            }}
-          />
-          <button
-            type="submit"
-            disabled={!manualText.trim()}
-            style={{
-              padding: '0 14px', borderRadius: 8, border: 'none',
-              background: 'var(--accent)', color: '#fff', fontSize: 12.5, fontWeight: 600,
-              cursor: manualText.trim() ? 'pointer' : 'not-allowed'
-            }}
-          >Send</button>
-        </form>
-      )}
-
       {/* remaining questions — scripted fallback for when you're not using the mic */}
-      {remaining.length > 0 && conversation.status !== 'connected' && (
+      {(hadVoiceCall || remaining.length > 0) && conversation.status !== 'connected' && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--line)' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 6 }}>
-            No mic? Ask manually — {totalQuestions - remaining.length}/{totalQuestions} details gathered
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 90, overflowY: 'auto' }}>
-            {remaining.map(item => (
-              <button
-                key={item.q}
-                onClick={() => onAskQuestion(item)}
+          {hadVoiceCall && (
+            <form onSubmit={sendManualMessage} style={{ display: 'flex', gap: 6, marginBottom: remaining.length > 0 ? 10 : 0 }}>
+              <input
+                value={manualText}
+                onChange={e => setManualText(e.target.value)}
+                placeholder="Type what you're telling the caller…"
                 style={{
-                  textAlign: 'left', padding: '8px 11px', borderRadius: 9, border: '1px solid var(--line-strong)',
-                  background: 'var(--surface-2)', color: 'var(--ink)', fontSize: 12.5, cursor: 'pointer'
+                  flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--line-strong)',
+                  background: 'var(--surface-2)', color: 'var(--ink)', fontSize: 12.5, padding: '0 10px'
                 }}
-              >{item.q}</button>
-            ))}
-          </div>
+              />
+              <button
+                type="submit"
+                disabled={!manualText.trim()}
+                style={{
+                  height: 32, padding: '0 12px', borderRadius: 8, border: 'none',
+                  background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 12.5,
+                  cursor: manualText.trim() ? 'pointer' : 'not-allowed'
+                }}
+              >Log</button>
+            </form>
+          )}
+          {remaining.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 6 }}>
+                No mic? Ask manually — {totalQuestions - remaining.length}/{totalQuestions} details gathered
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 90, overflowY: 'auto' }}>
+                {remaining.map(item => (
+                  <button
+                    key={item.q}
+                    onClick={() => onAskQuestion(item)}
+                    style={{
+                      textAlign: 'left', padding: '8px 11px', borderRadius: 9, border: '1px solid var(--line-strong)',
+                      background: 'var(--surface-2)', color: 'var(--ink)', fontSize: 12.5, cursor: 'pointer'
+                    }}
+                  >{item.q}</button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 

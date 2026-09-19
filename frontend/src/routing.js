@@ -1,45 +1,15 @@
-// Fetches a real, road-following driving route between two points.
-// Tries OSRM's public demo server first; if that's down or rate-limited,
-// falls back to OpenRouteService (when VITE_ORS_API_KEY is set). Returns
-// coordinates as [lat, lng] pairs (Leaflet's order), plus the route's
-// actual distance/duration.
+// Fetches a real, road-following driving route between two points using
+// OSRM's public demo routing server. Returns coordinates as [lat, lng]
+// pairs (Leaflet's order), plus the route's actual distance/duration.
 export async function fetchDrivingRoute(startLat, startLng, endLat, endLng) {
-  try {
-    return await fetchOsrmRoute(startLat, startLng, endLat, endLng);
-  } catch (osrmError) {
-    const orsKey = import.meta.env.VITE_ORS_API_KEY;
-    if (!orsKey) throw osrmError; // no backup configured — surface the original error
-    return await fetchOrsRoute(startLat, startLng, endLat, endLng, orsKey);
-  }
-}
-
-async function fetchOsrmRoute(startLat, startLng, endLat, endLng) {
   const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error('OSRM routing service unavailable');
+  if (!res.ok) throw new Error('routing service unavailable');
   const data = await res.json();
-  if (!data.routes || !data.routes.length) throw new Error('OSRM found no route');
+  if (!data.routes || !data.routes.length) throw new Error('no route found');
   const route = data.routes[0];
   const coords = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
   return { coords, distanceMeters: route.distance, durationSeconds: route.duration };
-}
-
-async function fetchOrsRoute(startLat, startLng, endLat, endLng, apiKey) {
-  const res = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-    method: 'POST',
-    headers: {
-      Authorization: apiKey,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ coordinates: [[startLng, startLat], [endLng, endLat]] })
-  });
-  if (!res.ok) throw new Error('OpenRouteService routing failed');
-  const data = await res.json();
-  const feature = data.features && data.features[0];
-  if (!feature) throw new Error('OpenRouteService found no route');
-  const coords = feature.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-  const summary = feature.properties.summary;
-  return { coords, distanceMeters: summary.distance, durationSeconds: summary.duration };
 }
 
 export function haversineMeters([lat1, lng1], [lat2, lng2]) {

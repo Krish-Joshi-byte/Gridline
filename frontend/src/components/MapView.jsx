@@ -3,7 +3,6 @@ import { divIcon } from 'leaflet';
 import { useEffect } from 'react';
 import 'leaflet/dist/leaflet.css';
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 const TYPE_COLOR = { police: '#4c8dff', fire: '#ff6a4c', medical: '#35c98a' };
 const TYPE_ICON = { police: '🚓', fire: '🚒', medical: '🚑' };
 
@@ -71,15 +70,9 @@ export default function MapView({
         zoomControl={true}
       >
         <TileLayer
-          attribution={MAPBOX_TOKEN
-            ? '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'}
-          url={MAPBOX_TOKEN
-            ? `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}{r}?access_token=${MAPBOX_TOKEN}`
-            : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'}
-          subdomains={MAPBOX_TOKEN ? undefined : 'abcd'}
-          tileSize={MAPBOX_TOKEN ? 512 : undefined}
-          zoomOffset={MAPBOX_TOKEN ? -1 : undefined}
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          subdomains="abcd"
           maxZoom={19}
         />
 
