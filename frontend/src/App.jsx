@@ -2,11 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import TopNav from './components/TopNav.jsx';
 import MapView from './components/MapView.jsx';
 import CallPanel from './components/CallPanel.jsx';
+import FleetPanel from './components/FleetPanel.jsx';
 import { generateCallQueue } from './calls.js';
-import { getIntersections, getResponders, getMapConfig, dispatch as dispatchCall, arrive } from './api.js';
+import {
+  getIntersections, getResponders, getMapConfig, getStations, getBeats,
+  dispatch as dispatchCall, arrive, clearUnit, syncPositions
+} from './api.js';
 import { fetchDrivingRoute, makePathInterpolator } from './routing.js';
+import { createPatrolEngine } from './patrol.js';
 
 const FALLBACK_CENTER = { centerLat: 37.2296, centerLng: -80.4139, cityName: 'Blacksburg, VA', zip: '24060' };
+
+// How long a unit works a call before it clears itself back into service. Real
+// scene times vary wildly; this keeps the demo board from silting up with units
+// parked on scene forever, and the dispatcher can always clear one early.
+const ON_SCENE_MS = 90_000;
 
 export default function App() {
   const [mapConfig, setMapConfig] = useState(FALLBACK_CENTER);
@@ -25,17 +35,84 @@ export default function App() {
   const [unitDispatches, setUnitDispatches] = useState({}); // unitId -> { callId, type, etaSeconds, status, targetLat, targetLng }
   const [routes, setRoutes] = useState({});                 // unitId -> [[lat,lng], ...]
 
+  const [stations, setStations] = useState([]);
+  const [beats, setBeats] = useState([]);
+  const [beatGeometry, setBeatGeometry] = useState({}); // beatId -> routed [[lat,lng], ...]
+
   const animRefs = useRef({});
   const shiftTimerRef = useRef(null);
+  const clearTimersRef = useRef({});
+  const patrolRef = useRef(null);
 
   useEffect(() => {
     getMapConfig().then(setMapConfig).catch(() => {});
     getIntersections().then(setIntersections).catch(() => {});
     getResponders().then(setResponders).catch(() => {});
+    getStations().then(data => setStations(data.stations || [])).catch(() => {});
+    getBeats().then(data => setBeats(data.beats || [])).catch(() => {});
   }, []);
 
+  // The patrol engine runs for the whole session, on duty or not — cruisers
+  // don't stop patrolling because the dispatcher stepped away from the console.
+  useEffect(() => {
+    const engine = createPatrolEngine({
+      onUpdate: (updates) => {
+        setResponders(prev => {
+          if (!prev.length) return prev;
+          const byId = new Map(updates.map(u => [u.unitId, u]));
+          return prev.map(r => {
+            const u = byId.get(r.id);
+            return u ? { ...r, lat: u.lat, lng: u.lng, status: u.status, statusLabel: u.statusLabel } : r;
+          });
+        });
+      },
+      onSync: (positions) => { syncPositions(positions).catch(() => {}); },
+      onGeometry: setBeatGeometry
+    });
+    patrolRef.current = engine;
+    engine.start();
+    return () => {
+      engine.stop();
+      patrolRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!patrolRef.current || !beats.length || !responders.length) return;
+    patrolRef.current.configure({ beats, fleet: responders, stations });
+    // Only re-configure when the plan or the roster changes; live positions are
+    // owned by the engine itself from here on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beats, stations, responders.length]);
+
+  useEffect(() => () => {
+    Object.values(clearTimersRef.current).forEach(clearTimeout);
+    clearTimersRef.current = {};
+  }, []);
+
+  // The server is authoritative for *state* (who's committed, who's free); the
+  // patrol engine is authoritative for *position* of anything not on a call.
+  // Merging rather than replacing is what stops a refresh from yanking a
+  // patrolling cruiser back to wherever its last heartbeat put it.
   function refreshResponders() {
-    getResponders().then(setResponders).catch(() => {});
+    getResponders().then(fresh => {
+      setResponders(prev => {
+        const local = new Map(prev.map(r => [r.id, r]));
+        return fresh.map(r => {
+          const mine = local.get(r.id);
+          if (!mine) return r;
+          if (r.busy) return { ...r, statusLabel: undefined };
+          const localCommitted = mine.status === 'EN_ROUTE' || mine.status === 'ON_SCENE';
+          return {
+            ...r,
+            lat: mine.lat,
+            lng: mine.lng,
+            status: localCommitted ? r.status : (mine.status || r.status),
+            statusLabel: localCommitted ? undefined : mine.statusLabel
+          };
+        });
+      });
+    }).catch(() => {});
   }
 
   function toggleDuty() {
@@ -100,11 +177,44 @@ export default function App() {
     }
 
     setQueue(q => q.map(c => (c.id === openCallId ? { ...c, status: 'dispatched' } : c)));
-    refreshResponders();
+
+    // Move-ups: with a unit committed, the backend says who slides over to
+    // cover the hole it left. Fire moves up to the vacated station, EMS shifts
+    // to the post covering that district.
+    if (result.coverage && result.coverage.length) {
+      for (const directive of result.coverage) {
+        patrolRef.current?.applyCoverage(directive);
+      }
+      setQueue(q => q.map(c => (c.id === openCallId
+        ? { ...c, transcript: [...c.transcript, { from: 'dispatcher', text: `↻ ${result.coverage.map(d => d.reason).join('; ')}` }] }
+        : c)));
+    }
 
     for (const unit of result.dispatched) {
-      dispatchOneUnit(unit, openCallId);
+      // The call animation owns this unit now; patrol hands it over. Start the
+      // run from where the unit is on screen rather than from its last
+      // heartbeat, so the marker doesn't jump backwards as it rolls.
+      const live = responders.find(r => r.id === unit.unitId);
+      patrolRef.current?.suspend(unit.unitId);
+      dispatchOneUnit(live ? { ...unit, startLat: live.lat, startLng: live.lng } : unit, openCallId);
     }
+  }
+
+  // Back in service from wherever the unit finished up: tell the server, drop
+  // it off the responding list, and let patrol drive it home or back to its beat.
+  function clearUnitNow(unitId, lat, lng) {
+    const timer = clearTimersRef.current[unitId];
+    if (timer) {
+      clearTimeout(timer);
+      delete clearTimersRef.current[unitId];
+    }
+    setUnitDispatches(d => {
+      const next = { ...d };
+      delete next[unitId];
+      return next;
+    });
+    patrolRef.current?.releaseToService(unitId, [lat, lng]);
+    clearUnit(unitId, lat, lng).catch(() => {}).finally(refreshResponders);
   }
 
   async function dispatchOneUnit(unit, callId) {
@@ -121,7 +231,10 @@ export default function App() {
     }
 
     setRoutes(r => ({ ...r, [unitId]: path }));
-    setUnitDispatches(d => ({ ...d, [unitId]: { callId, type, etaSeconds, status: 'En route', targetLat, targetLng } }));
+    setUnitDispatches(d => ({
+      ...d,
+      [unitId]: { callId, type, etaSeconds, status: 'En route', targetLat, targetLng, clearsAt: null }
+    }));
 
     animateAlongRoute(unitId, path, etaSeconds, targetLat, targetLng);
   }
@@ -148,9 +261,17 @@ export default function App() {
       if (p < 1) {
         animRefs.current[unitId] = requestAnimationFrame(step);
       } else {
-        setUnitDispatches(d => (d[unitId] ? { ...d, [unitId]: { ...d[unitId], status: 'On scene', etaSeconds: 0 } } : d));
+        const clearsAt = Date.now() + ON_SCENE_MS;
+        setUnitDispatches(d => (d[unitId]
+          ? { ...d, [unitId]: { ...d[unitId], status: 'On scene', etaSeconds: 0, clearsAt } }
+          : d));
         setRoutes(r => { const next = { ...r }; delete next[unitId]; return next; });
         arrive(unitId, targetLat, targetLng).then(refreshResponders).catch(() => {});
+        // On scene keeps the unit committed — it only frees up when it clears.
+        clearTimersRef.current[unitId] = setTimeout(
+          () => clearUnitNow(unitId, targetLat, targetLng),
+          ON_SCENE_MS
+        );
       }
     }
     animRefs.current[unitId] = requestAnimationFrame(step);
@@ -162,7 +283,9 @@ export default function App() {
   }
 
   const dispatchList = Object.entries(unitDispatches).map(([unitId, d]) => ({ unitId, ...d }));
+  const beatTypes = Object.fromEntries(beats.map(b => [b.id, b.type]));
   const availCount = responders.filter(r => !r.busy).length;
+  const patrollingCount = responders.filter(r => r.status === 'PATROLLING').length;
   const enRouteCount = dispatchList.filter(d => d.status === 'En route').length;
   const onSceneCount = dispatchList.filter(d => d.status === 'On scene').length;
   const waitingCalls = queue.filter(c => c.status === 'waiting');
@@ -230,6 +353,13 @@ export default function App() {
               })}
             </div>
           )}
+
+          <FleetPanel
+            responders={responders}
+            stations={stations}
+            dispatches={unitDispatches}
+            onClearUnit={clearUnitNow}
+          />
         </div>
 
         {/* right column: map */}
@@ -241,6 +371,9 @@ export default function App() {
               responders={responders}
               activePin={activePin}
               routes={routes}
+              stations={stations}
+              beatGeometry={beatGeometry}
+              beatTypes={beatTypes}
               onIntersectionClick={() => {}}
               cityLabel={`${mapConfig.cityName || 'Blacksburg, VA'} · ${mapConfig.zip || '24060'}`}
             />
@@ -261,6 +394,7 @@ export default function App() {
             padding: '10px 4px', borderTop: '1px solid var(--line)'
           }}>
             <span>{availCount} available</span>
+            <span>{patrollingCount} on patrol</span>
             <span>{enRouteCount} en route</span>
             <span>{onSceneCount} on scene</span>
             <span style={{ marginLeft: 'auto' }}>{waitingCalls.length} waiting call{waitingCalls.length === 1 ? '' : 's'}</span>

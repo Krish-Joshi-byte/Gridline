@@ -125,12 +125,18 @@ needed.
 
 
 
-- **Real map**: the frontend renders an actual [Leaflet](https://leafletjs.com/)
-  map (OpenStreetMap/CARTO dark tiles) centered on **Blacksburg, VA
-  24060**. Intersections and responder start positions are real
-  lat/lng points around town (Main St & College Ave, the Blacksburg
-  PD/Fire/Rescue stations, etc.) — see `IntersectionRegistry.java` and
-  `ResponderStore.java` on the backend.
+- **Real map**: the frontend renders an actual [MapLibre GL JS](https://maplibre.org/)
+  vector map, tiled by [OpenFreeMap](https://openfreemap.org/) (free, no API
+  key, same "no auth needed" deal as the OSRM routing below) centered on
+  **Blacksburg, VA 24060**. Unlike raster tile libraries (Leaflet), MapLibre
+  renders on the GPU — continuous smooth zoom, crisp labels at any zoom
+  level, and 3D building tilt via right-click-drag. Intersections and
+  responder start positions are real lat/lng points around town (Main St &
+  College Ave, the Blacksburg PD/Fire/Rescue stations, etc.) — see
+  `IntersectionRegistry.java` and `ResponderStore.java` on the backend. The
+  style is set in `frontend/src/components/MapView.jsx` (`MAP_STYLE`) — swap
+  in OpenFreeMap's `liberty` (colorful) or `positron` (light) style there if
+  you want a different look; all three are free and keyless.
 - **Road-following dispatch**: when a unit is dispatched, the frontend
   (`src/routing.js`) asks the public [OSRM](https://project-osrm.org/)
   driving API for a real route between the unit and the call, and
@@ -140,6 +146,33 @@ needed.
   The backend still returns a straight-line ETA (haversine distance /
   average urban speed) as a baseline; once a real route comes back, the
   frontend uses OSRM's own routed duration instead.
+- **Stations from public data**: police HQ, both fire stations, the rescue
+  squad and the receiving hospital come from
+  `backend/src/main/resources/gridline/stations.json`, each with the
+  published address it was derived from and a `precision` flag. They show
+  on the map as labelled badges (PD / FD / EMS / H). Run
+  `node tools/geocode-stations.mjs` to replace the estimated coordinates
+  with OpenStreetMap geocodes — see `HANDOFF.md`.
+- **Patrol, posts and quarters**: units aren't parked between calls. Each
+  service runs the pattern it actually uses, configured in
+  `gridline/beats.json`:
+  police run continuous preventive patrol around three beats (pausing at
+  waypoints flagged as stationary posts), EMS rotates between posts
+  (system status management — ambulances post, they don't cruise), and
+  fire apparatus sits in quarters, rolling only for calls, move-ups, or a
+  periodic district familiarization lap. Beat waypoints are real
+  intersections; the line a unit follows is the OSRM driving route through
+  them, so patrols track actual streets. Toggle the dashed beat overlay
+  with the **Beats** chip on the map.
+- **Move-ups**: commit an engine and the other station's engine relocates
+  to cover it; commit a medic and the other shifts to the post covering
+  that district. `CoverageService` produces the directive, the client
+  carries it out, and the call transcript logs it.
+- **Committed until cleared**: arriving on scene no longer frees a unit.
+  It stays unavailable until it clears — automatically after 90 seconds or
+  via **Clear** on the unit board — then drives back to its beat or
+  quarters on real roads. Patrolling units heartbeat their position every
+  6 seconds so dispatch ETAs are measured from where a unit actually is.
 - **Call queue**: going on duty generates a small queue of realistic
   911 calls tied to real Blacksburg intersections. Opening a call shows
   a live transcript you can build out with suggested follow-up
@@ -153,29 +186,14 @@ needed.
   stores it. The React app's `CallNotesPanel` fetches `GET /notes/:code`
   for whatever call is currently open, polling every few seconds so a
   note that lands after the call ends still shows up.
-- **Live voice call, in the browser, with operator takeover**: opening
-  a call in `CallPanel` has a real "🎙 Start voice call" button, not
-  just the scripted question buttons. It uses ElevenLabs'
-  `@elevenlabs/react` SDK to open an actual mic-based voice conversation
-  with your ElevenLabs agent — so instead of clicking through canned
-  Q&A, you can literally talk to the AI as the caller. Each turn of
-  that real conversation streams into the same transcript UI. While
-  it's live, a **"🧑‍✈️ Take over from AI"** button cuts the AI's mic and
-  voice off entirely and switches to a free-text box, so the dispatcher
-  can keep logging the conversation by typing instead — "🔁 Resume AI on
-  this call" hands it back to the agent afterward. That free-text box
-  is also just always available whenever the AI isn't actively live
-  (before starting a call, or after a takeover), so you're never boxed
-  into only the preset questions. When the call ends, ElevenLabs'
-  post-call webhook (above) delivers the summary the normal way.
-
-  Worth being upfront about: since this app's mic stands in for the
-  caller's side (there's no separate real phone line here), taking over
-  doesn't connect you to a live caller mid-air — it stops the AI and
-  gives you a place to keep logging the conversation. Wiring this up to
-  real inbound phone calls (via Twilio + ElevenLabs telephony) would be
-  a meaningfully bigger feature, where "takeover" means bridging your
-  own line into an actual call.
+- **Live voice call, in the browser**: opening a call in `CallPanel`
+  now has a real "🎙 Start voice call" button, not just the scripted
+  question buttons. It uses ElevenLabs' `@elevenlabs/react` SDK to open
+  an actual mic-based voice conversation with your ElevenLabs agent —
+  so instead of clicking through canned Q&A, you can literally talk to
+  the AI as the caller. Each turn of that real conversation streams
+  into the same transcript UI. When the call ends, ElevenLabs' post-call
+  webhook (above) delivers the summary the normal way.
 
   **Setup:**
   1. Create a Conversational AI agent in the
@@ -197,38 +215,30 @@ needed.
      `GET /api/elevenlabs/session` endpoint hands the frontend whatever
      it needs (an agent ID, or a short-lived signed URL) without ever
      putting the API key in the browser.
-  5. `npm install` in `frontend/` to pick up the `@elevenlabs/react`
+  5. `npm install` in `frontend/` to pick up the new `@elevenlabs/react`
      dependency, then browsers will prompt for microphone access the
      first time someone clicks "Start voice call".
-- **Optional map/routing upgrades**: both free by default (CARTO tiles
-  + OSRM routing), both opt-in to swap:
-  - `VITE_MAPBOX_TOKEN` — switches the map tiles to Mapbox's dark style.
-    Free at [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/)
-    (50k map loads/month, no card required). Since it's baked into the
-    client JS, restrict it to your domain in Mapbox's token settings.
-  - `VITE_ORS_API_KEY` — an [OpenRouteService](https://openrouteservice.org/dev/#/signup)
-    key (free, ~2,000 requests/day) used only as a fallback: the app
-    tries OSRM first, and only calls ORS if OSRM fails or times out.
-  - Both go wherever `VITE_API_BASE` goes — `frontend/.env.production`
-    locally, or your host's environment variables in production —
-    followed by a rebuild, same as any other `VITE_*` var.
 
 ## Known shortcuts for the demo
 
 - All state (responders, call notes) lives in memory on the backend and
   resets on restart.
-- No auth on the API endpoints. CORS is restricted to specific origins
-  via `app.cors.allowed-origins` (see step 4 above), but there's still
-  no login or access control on the API itself — fine for a demo, not
-  for anything beyond it.
-- Intersection/station coordinates are approximate (accurate enough to
-  sit on the real road network for routing), not surveyed addresses.
-- Routing tries OSRM's free public demo server first, then
-  OpenRouteService if `VITE_ORS_API_KEY` is set — both are rate-limited
-  free tiers, not meant for production traffic. Swap in a paid/self-hosted
-  option (your own OSRM instance, Mapbox Directions, Google Routes)
-  before this goes anywhere beyond a demo.
-- The ElevenLabs voice call and takeover are genuinely functional, but
-  "takeover" only affects this app's own transcript — see the caveat
-  under "Live voice call" above about what it would take to bridge a
-  real phone line.
+- No auth on the API endpoints, and CORS is wide open (`origins = "*"`)
+  — fine for a demo, not for anything beyond it.
+- Station addresses are public record, but some coordinates are
+  street-level estimates from those addresses rather than geocodes — they
+  are flagged `"precision": "approximate"` in `stations.json`. Run
+  `node tools/geocode-stations.mjs` (about 15 seconds, then restart the
+  backend) before showing this to anyone who knows Blacksburg.
+  Intersection coordinates are likewise approximate — accurate enough to
+  sit on the real road network for routing, not surveyed.
+- The patrol simulation runs in the browser, so two open tabs simulate two
+  independent patrols that both heartbeat to the same server. Fine for one
+  console; move the tick to the backend if you need more.
+- Routing depends on OSRM's free public demo server, which is rate
+  limited and not meant for production traffic — swap in your own OSRM
+  instance or a commercial routing API (Mapbox, Google, etc.) before
+  this goes anywhere beyond a demo.
+- The agent's system prompt and full ElevenLabs dashboard setup steps
+  are the same as in the earlier Python/Java call-notes-only versions —
+  ask if you want that written back into this README.

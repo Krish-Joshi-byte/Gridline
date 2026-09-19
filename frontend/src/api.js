@@ -16,6 +16,22 @@ export async function getResponders() {
   return res.json();
 }
 
+// Real police, fire, rescue and hospital facilities, with the published
+// address each coordinate was derived from.
+export async function getStations() {
+  const res = await fetch(`${API_BASE}/api/stations`);
+  if (!res.ok) throw new Error('Failed to load stations');
+  return res.json();
+}
+
+// Patrol beats, EMS post rotations and fire districts — the plan the client
+// turns into real driving routes via OSRM.
+export async function getBeats() {
+  const res = await fetch(`${API_BASE}/api/beats`);
+  if (!res.ok) throw new Error('Failed to load beats');
+  return res.json();
+}
+
 export async function getMapConfig() {
   const res = await fetch(`${API_BASE}/api/map-config`);
   if (!res.ok) throw new Error('Failed to load map config');
@@ -43,6 +59,31 @@ export async function arrive(unitId, lat, lng) {
     body: JSON.stringify({ lat, lng })
   });
   if (!res.ok) throw new Error('Failed to free unit');
+  return res.json();
+}
+
+// Back in service. Until this is called the unit stays committed to the call,
+// so the board shows what's actually tied up rather than freeing a unit the
+// moment it pulls onto the scene.
+export async function clearUnit(unitId, lat, lng) {
+  const res = await fetch(`${API_BASE}/api/dispatch/${encodeURIComponent(unitId)}/clear`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lng })
+  });
+  if (!res.ok) throw new Error('Failed to clear unit');
+  return res.json();
+}
+
+// Heartbeat for units moving under their own steam (patrol, post moves,
+// familiarization laps) so server-side ETAs measure from where units really are.
+export async function syncPositions(positions) {
+  const res = await fetch(`${API_BASE}/api/responders/positions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ positions })
+  });
+  if (!res.ok) throw new Error('Failed to sync positions');
   return res.json();
 }
 
