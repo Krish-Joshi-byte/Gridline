@@ -80,6 +80,14 @@ export default function App() {
       : c)));
   }
 
+  // Lets the dispatcher type a line directly — used for the scripted
+  // fallback and for whatever they say after taking over from the AI.
+  function handleSendMessage(text) {
+    setQueue(q => q.map(c => (c.id !== openCallId
+      ? c
+      : { ...c, transcript: [...c.transcript, { from: 'dispatcher', text }] })));
+  }
+
   // The dispatcher picks exactly which units respond — no auto-assignment.
   async function handleDispatchUnits(unitIds) {
     if (!openCall || unitIds.length === 0) return;
@@ -252,6 +260,7 @@ export default function App() {
                 onClose={closeCallPanel}
                 onAskQuestion={handleAskQuestion}
                 onLiveTranscript={handleLiveTranscript}
+                onSendMessage={handleSendMessage}
                 onDispatchUnits={handleDispatchUnits}
               />
             )}

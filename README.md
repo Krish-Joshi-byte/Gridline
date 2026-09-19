@@ -153,14 +153,29 @@ needed.
   stores it. The React app's `CallNotesPanel` fetches `GET /notes/:code`
   for whatever call is currently open, polling every few seconds so a
   note that lands after the call ends still shows up.
-- **Live voice call, in the browser**: opening a call in `CallPanel`
-  now has a real "🎙 Start voice call" button, not just the scripted
-  question buttons. It uses ElevenLabs' `@elevenlabs/react` SDK to open
-  an actual mic-based voice conversation with your ElevenLabs agent —
-  so instead of clicking through canned Q&A, you can literally talk to
-  the AI as the caller. Each turn of that real conversation streams
-  into the same transcript UI. When the call ends, ElevenLabs' post-call
-  webhook (above) delivers the summary the normal way.
+- **Live voice call, in the browser, with operator takeover**: opening
+  a call in `CallPanel` has a real "🎙 Start voice call" button, not
+  just the scripted question buttons. It uses ElevenLabs'
+  `@elevenlabs/react` SDK to open an actual mic-based voice conversation
+  with your ElevenLabs agent — so instead of clicking through canned
+  Q&A, you can literally talk to the AI as the caller. Each turn of
+  that real conversation streams into the same transcript UI. While
+  it's live, a **"🧑‍✈️ Take over from AI"** button cuts the AI's mic and
+  voice off entirely and switches to a free-text box, so the dispatcher
+  can keep logging the conversation by typing instead — "🔁 Resume AI on
+  this call" hands it back to the agent afterward. That free-text box
+  is also just always available whenever the AI isn't actively live
+  (before starting a call, or after a takeover), so you're never boxed
+  into only the preset questions. When the call ends, ElevenLabs'
+  post-call webhook (above) delivers the summary the normal way.
+
+  Worth being upfront about: since this app's mic stands in for the
+  caller's side (there's no separate real phone line here), taking over
+  doesn't connect you to a live caller mid-air — it stops the AI and
+  gives you a place to keep logging the conversation. Wiring this up to
+  real inbound phone calls (via Twilio + ElevenLabs telephony) would be
+  a meaningfully bigger feature, where "takeover" means bridging your
+  own line into an actual call.
 
   **Setup:**
   1. Create a Conversational AI agent in the
@@ -182,22 +197,38 @@ needed.
      `GET /api/elevenlabs/session` endpoint hands the frontend whatever
      it needs (an agent ID, or a short-lived signed URL) without ever
      putting the API key in the browser.
-  5. `npm install` in `frontend/` to pick up the new `@elevenlabs/react`
+  5. `npm install` in `frontend/` to pick up the `@elevenlabs/react`
      dependency, then browsers will prompt for microphone access the
      first time someone clicks "Start voice call".
+- **Optional map/routing upgrades**: both free by default (CARTO tiles
+  + OSRM routing), both opt-in to swap:
+  - `VITE_MAPBOX_TOKEN` — switches the map tiles to Mapbox's dark style.
+    Free at [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/)
+    (50k map loads/month, no card required). Since it's baked into the
+    client JS, restrict it to your domain in Mapbox's token settings.
+  - `VITE_ORS_API_KEY` — an [OpenRouteService](https://openrouteservice.org/dev/#/signup)
+    key (free, ~2,000 requests/day) used only as a fallback: the app
+    tries OSRM first, and only calls ORS if OSRM fails or times out.
+  - Both go wherever `VITE_API_BASE` goes — `frontend/.env.production`
+    locally, or your host's environment variables in production —
+    followed by a rebuild, same as any other `VITE_*` var.
 
 ## Known shortcuts for the demo
 
 - All state (responders, call notes) lives in memory on the backend and
   resets on restart.
-- No auth on the API endpoints, and CORS is wide open (`origins = "*"`)
-  — fine for a demo, not for anything beyond it.
+- No auth on the API endpoints. CORS is restricted to specific origins
+  via `app.cors.allowed-origins` (see step 4 above), but there's still
+  no login or access control on the API itself — fine for a demo, not
+  for anything beyond it.
 - Intersection/station coordinates are approximate (accurate enough to
   sit on the real road network for routing), not surveyed addresses.
-- Routing depends on OSRM's free public demo server, which is rate
-  limited and not meant for production traffic — swap in your own OSRM
-  instance or a commercial routing API (Mapbox, Google, etc.) before
-  this goes anywhere beyond a demo.
-- The agent's system prompt and full ElevenLabs dashboard setup steps
-  are the same as in the earlier Python/Java call-notes-only versions —
-  ask if you want that written back into this README.
+- Routing tries OSRM's free public demo server first, then
+  OpenRouteService if `VITE_ORS_API_KEY` is set — both are rate-limited
+  free tiers, not meant for production traffic. Swap in a paid/self-hosted
+  option (your own OSRM instance, Mapbox Directions, Google Routes)
+  before this goes anywhere beyond a demo.
+- The ElevenLabs voice call and takeover are genuinely functional, but
+  "takeover" only affects this app's own transcript — see the caveat
+  under "Live voice call" above about what it would take to bridge a
+  real phone line.

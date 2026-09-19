@@ -31,10 +31,12 @@ function estimateEtaMinutes(unit, call) {
   return Math.max(1, Math.round((distKm / AVG_URBAN_SPEED_KMH) * 60));
 }
 
-export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onLiveTranscript, onDispatchUnits }) {
+export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onLiveTranscript, onDispatchUnits, onSendMessage }) {
   const [connected, setConnected] = useState(0);
   const [selected, setSelected] = useState(new Set());
   const [voiceError, setVoiceError] = useState(null);
+  const [takenOver, setTakenOver] = useState(false);
+  const [manualText, setManualText] = useState('');
   const scrollRef = useRef(null);
 
   // Real voice conversation with the ElevenLabs Conversational AI agent —
@@ -57,6 +59,8 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
     setConnected(0);
     setSelected(new Set());
     setVoiceError(null);
+    setTakenOver(false);
+    setManualText('');
     const t = setInterval(() => setConnected(c => c + 1), 1000);
     // Hang up any live voice session when switching to a different call
     // or closing the panel — it shouldn't keep running in the background.
@@ -69,6 +73,7 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
 
   async function startVoiceCall() {
     setVoiceError(null);
+    setTakenOver(false);
     try {
       const session = await getElevenLabsSession();
       const startOpts = session.signed_url
@@ -90,6 +95,34 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
 
   function endVoiceCall() {
     conversation.endSession().catch(() => {});
+    setTakenOver(false);
+  }
+
+  // Cuts the AI's mic and voice off entirely, without ending the call —
+  // the dispatcher stays on the line and keeps logging the conversation
+  // manually via the free-text box below. Since this browser-only setup
+  // stands in for the caller's side rather than bridging a real phone
+  // line, "taking over" means the dispatcher now drives the transcript
+  // directly instead of the AI doing it.
+  function takeOverFromAI() {
+    if (conversation.status === 'connected') {
+      conversation.endSession().catch(() => {});
+    }
+    setVoiceError(null);
+    setTakenOver(true);
+  }
+
+  async function resumeAI() {
+    setTakenOver(false);
+    await startVoiceCall();
+  }
+
+  function submitManualMessage(e) {
+    e.preventDefault();
+    const text = manualText.trim();
+    if (!text) return;
+    onSendMessage(text);
+    setManualText('');
   }
 
   useEffect(() => {
@@ -145,13 +178,33 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
 
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
           {conversation.status === 'connected' ? (
+            <>
+              <button
+                onClick={takeOverFromAI}
+                style={{
+                  flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--warning, #f0b429)',
+                  background: 'transparent', color: 'var(--warning, #f0b429)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+                }}
+              >🧑‍✈️ Take over from AI {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
+              <button
+                onClick={endVoiceCall}
+                title="End call"
+                style={{
+                  width: 32, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
+                  background: 'transparent', color: 'var(--danger, #e5484d)', fontSize: 13, cursor: 'pointer', flexShrink: 0
+                }}
+              >✕</button>
+            </>
+          ) : takenOver ? (
             <button
-              onClick={endVoiceCall}
+              onClick={resumeAI}
+              disabled={conversation.status === 'connecting'}
               style={{
-                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
-                background: 'transparent', color: 'var(--danger, #e5484d)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
+                background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
+                cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
               }}
-            >⏹ End voice call {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
+            >🔁 {conversation.status === 'connecting' ? 'Reconnecting…' : 'Resume AI on this call'}</button>
           ) : (
             <button
               onClick={startVoiceCall}
@@ -164,6 +217,11 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
             >🎙 {conversation.status === 'connecting' ? 'Connecting…' : 'Start voice call'}</button>
           )}
         </div>
+        {takenOver && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--warning, #f0b429)' }}>
+            You've taken over — the AI is off the line. Type your responses below.
+          </div>
+        )}
         {voiceError && (
           <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger, #e5484d)' }}>{voiceError}</div>
         )}
@@ -182,6 +240,33 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
           }}>{m.text}</div>
         ))}
       </div>
+
+      {/* free-text line — available whenever the AI isn't actively live,
+          so the dispatcher can type instead of only clicking scripted
+          questions (this is also how a takeover keeps going after the
+          AI's mic is cut) */}
+      {conversation.status !== 'connected' && (
+        <form onSubmit={submitManualMessage} style={{ display: 'flex', gap: 6, padding: '0 14px 10px' }}>
+          <input
+            value={manualText}
+            onChange={e => setManualText(e.target.value)}
+            placeholder={takenOver ? 'Type what you\'re telling the caller…' : 'Say something to the caller…'}
+            style={{
+              flex: 1, background: 'var(--surface-2)', border: '1px solid var(--line-strong)',
+              borderRadius: 8, padding: '8px 10px', color: 'var(--ink)', fontSize: 12.5, outline: 'none'
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!manualText.trim()}
+            style={{
+              padding: '0 14px', borderRadius: 8, border: 'none',
+              background: 'var(--accent)', color: '#fff', fontSize: 12.5, fontWeight: 600,
+              cursor: manualText.trim() ? 'pointer' : 'not-allowed'
+            }}
+          >Send</button>
+        </form>
+      )}
 
       {/* remaining questions — scripted fallback for when you're not using the mic */}
       {remaining.length > 0 && conversation.status !== 'connected' && (
