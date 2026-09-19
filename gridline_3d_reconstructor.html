@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gridline 3D Reconstructor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071013;
+      --panel: #0d191d;
+      --panel-2: #112329;
+      --line: #23404a;
+      --text: #e7f8fb;
+      --muted: #8dafb7;
+      --accent: #42f5c5;
+      --danger: #ff6b6b;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.4 Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+    input[type="url"] { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: #071317; color: var(--text); padding: 8px; }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 9px 12px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    button.primary { background: var(--accent); color: #032019; border-color: var(--accent); font-weight: 800; }
+
+    .app { display: grid; grid-template-columns: 340px 1fr; width: 100%; height: 100%; }
+    .sidebar {
+      z-index: 2;
+      display: flex;
+      min-height: 0;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      padding: 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(7, 16, 19, .97);
+    }
+    .brand { display: flex; align-items: center; justify-content: space-between; }
+    .brand h1 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+    .badge { color: var(--accent); border: 1px solid #1f6958; border-radius: 999px; padding: 3px 8px; font-size: 11px; }
+    .hint, .small { color: var(--muted); font-size: 12px; }
+
+    .dropzone {
+      display: grid;
+      min-height: 120px;
+      place-items: center;
+      text-align: center;
+      border: 1px dashed #37616d;
+      border-radius: 12px;
+      padding: 16px;
+      background: #0a1519;
+      transition: .15s ease;
+    }
+    .dropzone.drag { border-color: var(--accent); background: #0d2823; }
+    .dropzone input { display: none; }
+    .dropzone strong { display: block; margin-bottom: 4px; }
+
+    video { display: none; width: 100%; max-height: 150px; border-radius: 9px; background: #000; }
+    video.visible { display: block; }
+
+    .card { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--panel); }
+    .card h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #b6d8df; }
+    .field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+    .field output { min-width: 54px; text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .field select { width: 148px; }
+    input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+    select {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #071317;
+      color: var(--text);
+      padding: 7px;
+    }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .actions .primary { grid-column: 1 / -1; }
+    .progress-shell { height: 7px; overflow: hidden; border-radius: 999px; background: #071317; }
+    .progress { width: 0; height: 100%; background: var(--accent); transition: width .15s linear; }
+    #status { min-height: 36px; color: var(--muted); }
+    #status.error { color: var(--danger); }
+
+    .viewer { position: relative; min-width: 0; }
+    #scene { position: absolute; inset: 0; }
+    .overlay {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .stat { border: 1px solid var(--line); border-radius: 8px; background: rgba(7,16,19,.82); padding: 7px 10px; backdrop-filter: blur(10px); }
+    .stat b { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      pointer-events: none;
+      text-align: center;
+    }
+    .empty.hidden { display: none; }
+
+    @media (max-width: 760px) {
+      body { overflow: auto; }
+      .app { grid-template-columns: 1fr; grid-template-rows: auto 65vh; height: auto; min-height: 100%; }
+      .sidebar { overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+      .viewer { min-height: 65vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>Gridline 3D</h1>
+        <span class="badge">BACKEND PROCESSING</span>
+      </div>
+      <div class="hint">Upload a slow pan or walk-around video. The backend extracts frames, estimates depth and camera motion, then returns a PLY point cloud.</div>
+
+      <label class="dropzone" id="dropzone">
+        <input id="videoInput" type="file" accept="video/*" />
+        <span>
+          <strong>Drop a video here</strong>
+          <span class="small">or click to select MP4, MOV, or WebM</span>
+        </span>
+      </label>
+      <video id="video" controls muted playsinline></video>
+
+      <section class="card">
+        <h2>Backend</h2>
+        <label>
+          <span class="small">Reconstruction API URL</span>
+          <input id="apiUrl" type="url" value="http://localhost:8000" spellcheck="false" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Reconstruction</h2>
+        <label class="field">
+          <span>Frame samples</span><output id="frameCountOut">12</output>
+          <input id="frameCount" type="range" min="4" max="36" step="1" value="12" />
+        </label>
+        <label class="field">
+          <span>Frame resolution</span><output id="resolutionOut">384 px</output>
+          <input id="resolution" type="range" min="128" max="768" step="64" value="384" />
+        </label>
+        <label class="field">
+          <span>Point stride</span><output id="strideOut">2 px</output>
+          <input id="stride" type="range" min="1" max="6" step="1" value="2" />
+        </label>
+        <label class="field">
+          <span>Voxel size</span><output id="voxelOut">0.060</output>
+          <input id="voxelSize" type="range" min="0.015" max="0.2" step="0.005" value="0.06" />
+        </label>
+        <label class="field">
+          <span>Depth scale</span><output id="depthOut">4.0</output>
+          <input id="depthScale" type="range" min="1" max="12" step="0.25" value="4" />
+        </label>
+        <label class="field">
+          <span>Camera motion</span>
+          <select id="motion">
+            <option value="orbit">Walk around / orbit</option>
+            <option value="forward">Walk forward</option>
+            <option value="static">Mostly stationary</option>
+          </select>
+        </label>
+        <label class="field" id="motionAmountField">
+          <span>Motion amount</span><output id="motionOut">70°</output>
+          <input id="motionAmount" type="range" min="10" max="180" step="5" value="70" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Output</h2>
+        <label class="field">
+          <span>Render mode</span>
+          <select id="renderMode">
+            <option value="points">Point cloud</option>
+            <option value="voxels">Voxel cubes</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Point size</span><output id="pointSizeOut">0.035</output>
+          <input id="pointSize" type="range" min="0.005" max="0.12" step="0.005" value="0.035" />
+        </label>
+      </section>
+
+      <div class="actions">
+        <button class="primary" id="buildBtn" disabled>Build 3D grid</button>
+        <button id="cancelBtn" disabled>Cancel</button>
+        <button id="exportBtn" disabled>Export PLY</button>
+        <button id="resetViewBtn">Reset view</button>
+      </div>
+
+      <div class="progress-shell"><div class="progress" id="progress"></div></div>
+      <div id="status">Waiting for a video.</div>
+      <div class="small">Best results: a steady 5–20 second clip, slow movement, good lighting, and a mostly static scene. The backend downloads the depth model on its first job. CPU processing can take several minutes; an NVIDIA GPU is much faster.</div>
+      <canvas id="frameCanvas" hidden></canvas>
+    </aside>
+
+    <section class="viewer">
+      <div id="scene"></div>
+      <div class="overlay">
+        <div class="stat">Voxels <b id="pointStat">0</b></div>
+        <div class="stat">Frames <b id="frameStat">0</b></div>
+      </div>
+      <div class="empty" id="empty">
+        <div>
+          <strong>No reconstruction yet</strong><br />
+          Upload a video and build the 3D grid.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js';
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js';
+
+    const $ = (id) => document.getElementById(id);
+    const ui = {
+      input: $('videoInput'), video: $('video'), dropzone: $('dropzone'), apiUrl: $('apiUrl'),
+      frameCount: $('frameCount'), resolution: $('resolution'), stride: $('stride'),
+      voxelSize: $('voxelSize'), depthScale: $('depthScale'), motion: $('motion'),
+      motionAmount: $('motionAmount'), motionAmountField: $('motionAmountField'),
+      renderMode: $('renderMode'), pointSize: $('pointSize'), build: $('buildBtn'),
+      cancel: $('cancelBtn'), export: $('exportBtn'), reset: $('resetViewBtn'),
+      progress: $('progress'), status: $('status'), empty: $('empty'),
+      pointStat: $('pointStat'), frameStat: $('frameStat')
+    };
+
+    let videoUrl = null;
+    let videoFile = null;
+    let activeJobId = null;
+    let cancelled = false;
+    let voxels = [];
+    let cloudObject = null;
+    let resultBlob = null;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x071013);
+    scene.fog = new THREE.FogExp2(0x071013, 0.025);
+
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 1000);
+    camera.position.set(5, 3.5, 7);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    $('scene').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x18343a, 2.1));
+    const grid = new THREE.GridHelper(20, 40, 0x27505a, 0x142b31);
+    grid.position.y = -2;
+    scene.add(grid);
+    const axes = new THREE.AxesHelper(1.2);
+    axes.position.set(-4.5, -1.98, -4.5);
+    scene.add(axes);
+
+    function resize() {
+      const host = $('scene');
+      const w = host.clientWidth || 1;
+      const h = host.clientHeight || 1;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+    new ResizeObserver(resize).observe($('scene'));
+    resize();
+
+    (function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+
+    const bindOutput = (inputId, outputId, format = (value) => value) => {
+      const input = $(inputId), output = $(outputId);
+      const sync = () => output.value = format(input.value);
+      input.addEventListener('input', sync);
+      sync();
+    };
+    bindOutput('frameCount', 'frameCountOut');
+    bindOutput('resolution', 'resolutionOut', (v) => `${v} px`);
+    bindOutput('stride', 'strideOut', (v) => `${v} px`);
+    bindOutput('voxelSize', 'voxelOut', (v) => Number(v).toFixed(3));
+    bindOutput('depthScale', 'depthOut', (v) => Number(v).toFixed(1));
+    bindOutput('motionAmount', 'motionOut', (v) => `${v}°`);
+    bindOutput('pointSize', 'pointSizeOut', (v) => Number(v).toFixed(3));
+
+    ui.motion.addEventListener('change', () => {
+      ui.motionAmountField.style.opacity = ui.motion.value === 'static' ? '.45' : '1';
+    });
+    ui.renderMode.addEventListener('change', renderCloud);
+    ui.pointSize.addEventListener('input', () => {
+      if (cloudObject?.isPoints) cloudObject.material.size = Number(ui.pointSize.value);
+    });
+
+    for (const type of ['dragenter', 'dragover']) {
+      ui.dropzone.addEventListener(type, (event) => {
+        event.preventDefault();
+        ui.dropzone.classList.add('drag');
+      });
+    }
+    for (const type of ['dragleave', 'drop']) {
+      ui.dropzone.addEventListener(type, (event) => {
+        event.preventDefault();
+        ui.dropzone.classList.remove('drag');
+      });
+    }
+    ui.dropzone.addEventListener('drop', (event) => loadVideo(event.dataTransfer.files[0]));
+    ui.input.addEventListener('change', () => loadVideo(ui.input.files[0]));
+
+    function apiBase() {
+      return ui.apiUrl.value.trim().replace(/\/+$/, '');
+    }
+
+    function setStatus(message, error = false) {
+      ui.status.textContent = message;
+      ui.status.classList.toggle('error', error);
+    }
+
+    function loadVideo(file) {
+      if (!file || !file.type.startsWith('video/')) {
+        setStatus('Choose a valid video file.', true);
+        return;
+      }
+      videoFile = file;
+      resultBlob = null;
+      voxels = [];
+      disposeCloud();
+      ui.empty.classList.remove('hidden');
+      ui.export.disabled = true;
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      videoUrl = URL.createObjectURL(file);
+      ui.video.src = videoUrl;
+      ui.video.classList.add('visible');
+      ui.build.disabled = true;
+      setStatus(`Loading ${file.name}…`);
+      ui.video.onloadedmetadata = () => {
+        ui.build.disabled = false;
+        setStatus(`${file.name} · ${ui.video.duration.toFixed(1)} seconds · ready to upload.`);
+      };
+      ui.video.onerror = () => setStatus('The browser could not decode this video.', true);
+    }
+
+    function updateProgress(value) {
+      ui.progress.style.width = `${Math.max(0, Math.min(100, Math.round(value * 100)))}%`;
+    }
+
+    function disposeCloud() {
+      if (!cloudObject) return;
+      scene.remove(cloudObject);
+      cloudObject.geometry?.dispose();
+      if (Array.isArray(cloudObject.material)) cloudObject.material.forEach((material) => material.dispose());
+      else cloudObject.material?.dispose();
+      cloudObject = null;
+    }
+
+    function renderCloud() {
+      disposeCloud();
+      if (!voxels.length) return;
+
+      if (ui.renderMode.value === 'voxels') {
+        const step = Math.max(1, Math.ceil(voxels.length / 70000));
+        const shown = step === 1 ? voxels : voxels.filter((_, index) => index % step === 0);
+        const size = Number(ui.voxelSize.value) * .9;
+        const geometry = new THREE.BoxGeometry(size, size, size);
+        const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+        const mesh = new THREE.InstancedMesh(geometry, material, shown.length);
+        const matrix = new THREE.Matrix4();
+        const color = new THREE.Color();
+        shown.forEach((point, index) => {
+          matrix.makeTranslation(point.x, point.y, point.z);
+          mesh.setMatrixAt(index, matrix);
+          color.setRGB(point.r / 255, point.g / 255, point.b / 255, THREE.SRGBColorSpace);
+          mesh.setColorAt(index, color);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
+        cloudObject = mesh;
+      } else {
+        const positions = new Float32Array(voxels.length * 3);
+        const colors = new Float32Array(voxels.length * 3);
+        const color = new THREE.Color();
+        voxels.forEach((point, index) => {
+          positions.set([point.x, point.y, point.z], index * 3);
+          color.setRGB(point.r / 255, point.g / 255, point.b / 255, THREE.SRGBColorSpace);
+          colors.set([color.r, color.g, color.b], index * 3);
+        });
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.computeBoundingSphere();
+        cloudObject = new THREE.Points(geometry, new THREE.PointsMaterial({
+          size: Number(ui.pointSize.value),
+          vertexColors: true,
+          sizeAttenuation: true
+        }));
+      }
+
+      scene.add(cloudObject);
+      ui.empty.classList.add('hidden');
+      fitView();
+    }
+
+    function fitView() {
+      if (!cloudObject) return resetView();
+      const box = new THREE.Box3().setFromObject(cloudObject);
+      if (box.isEmpty()) return resetView();
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const distance = Math.max(size.x, size.y, size.z, 1) * 1.7;
+      controls.target.copy(center);
+      camera.position.copy(center).add(new THREE.Vector3(distance, distance * .65, distance));
+      camera.near = Math.max(0.005, distance / 1000);
+      camera.far = distance * 20;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function resetView() {
+      camera.position.set(5, 3.5, 7);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
+    function parseAsciiPly(text) {
+      const marker = 'end_header';
+      const markerIndex = text.indexOf(marker);
+      if (markerIndex < 0) throw new Error('The backend returned an invalid PLY file.');
+      const header = text.slice(0, markerIndex);
+      if (!/format\s+ascii\s+1\.0/.test(header)) throw new Error('Only ASCII PLY output is supported.');
+      const match = header.match(/element\s+vertex\s+(\d+)/);
+      const expected = match ? Number(match[1]) : 0;
+      const bodyStart = text.indexOf('\n', markerIndex) + 1;
+      const lines = text.slice(bodyStart).trim().split(/\r?\n/);
+      const points = new Array(Math.min(expected || lines.length, lines.length));
+      for (let index = 0; index < points.length; index++) {
+        const values = lines[index].trim().split(/\s+/).map(Number);
+        points[index] = {
+          x: values[0], y: values[1], z: values[2],
+          r: values[3] ?? 255, g: values[4] ?? 255, b: values[5] ?? 255
+        };
+      }
+      return points.filter((point) => Number.isFinite(point.x + point.y + point.z));
+    }
+
+    async function requestJson(url, options) {
+      const response = await fetch(url, options);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || body.error || `${response.status} ${response.statusText}`);
+      return body;
+    }
+
+    const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+    async function build() {
+      if (!videoFile) return;
+      cancelled = false;
+      activeJobId = null;
+      resultBlob = null;
+      ui.build.disabled = true;
+      ui.cancel.disabled = false;
+      ui.export.disabled = true;
+      ui.pointStat.textContent = '0';
+      ui.frameStat.textContent = '0';
+      updateProgress(0);
+      setStatus('Uploading video to the reconstruction backend…');
+
+      const form = new FormData();
+      form.append('video', videoFile);
+      form.append('frame_count', ui.frameCount.value);
+      form.append('resolution', ui.resolution.value);
+      form.append('stride', ui.stride.value);
+      form.append('voxel_size', ui.voxelSize.value);
+      form.append('depth_scale', ui.depthScale.value);
+      form.append('motion', ui.motion.value);
+      form.append('motion_amount', ui.motionAmount.value);
+      form.append('max_points', '350000');
+
+      try {
+        const job = await requestJson(`${apiBase()}/api/reconstructions`, { method: 'POST', body: form });
+        activeJobId = job.id;
+
+        while (!cancelled) {
+          const status = await requestJson(`${apiBase()}/api/reconstructions/${activeJobId}`);
+          updateProgress(status.progress || 0);
+          ui.frameStat.textContent = String(status.frame_count || 0);
+          ui.pointStat.textContent = Number(status.points || 0).toLocaleString();
+          setStatus(status.stage || status.status);
+
+          if (status.status === 'complete') {
+            const resultUrl = new URL(status.resultUrl, `${apiBase()}/`).href;
+            const response = await fetch(resultUrl);
+            if (!response.ok) throw new Error(`Could not download reconstruction: ${response.statusText}`);
+            resultBlob = await response.blob();
+            setStatus('Downloading and parsing the generated point cloud…');
+            voxels = parseAsciiPly(await resultBlob.text());
+            ui.pointStat.textContent = voxels.length.toLocaleString();
+            renderCloud();
+            ui.export.disabled = false;
+            updateProgress(1);
+            setStatus(`Done. The backend generated ${voxels.length.toLocaleString()} occupied voxels.`);
+            return;
+          }
+          if (status.status === 'failed') throw new Error(status.error || 'Backend reconstruction failed.');
+          if (status.status === 'cancelled') {
+            setStatus('Reconstruction cancelled.');
+            return;
+          }
+          await sleep(800);
+        }
+      } catch (error) {
+        console.error(error);
+        setStatus(`Reconstruction failed: ${error.message}`, true);
+      } finally {
+        activeJobId = null;
+        ui.build.disabled = false;
+        ui.cancel.disabled = true;
+      }
+    }
+
+    async function cancelBuild() {
+      cancelled = true;
+      ui.cancel.disabled = true;
+      if (activeJobId) {
+        try {
+          await fetch(`${apiBase()}/api/reconstructions/${activeJobId}`, { method: 'DELETE' });
+        } catch (error) {
+          console.warn('Could not notify backend of cancellation.', error);
+        }
+      }
+      setStatus('Cancelling reconstruction…');
+    }
+
+    function exportPly() {
+      if (!resultBlob) return;
+      const url = URL.createObjectURL(resultBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'gridline-reconstruction.ply';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    ui.build.addEventListener('click', build);
+    ui.cancel.addEventListener('click', cancelBuild);
+    ui.export.addEventListener('click', exportPly);
+    ui.reset.addEventListener('click', () => cloudObject ? fitView() : resetView());
+  </script>
+</body>
+</html>
