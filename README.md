@@ -57,7 +57,35 @@ bought `gridline.wiki` through, then wait for DNS to propagate
 
 **2. Host the backend somewhere.** You don't have a platform for this
 yet either — **Render** or **Railway** are the least fussy for a plain
-Spring Boot app (point it at `backend/`, it detects the Maven build).
+Spring Boot app. On Render specifically: it has no native Java runtime,
+so the backend deploys as a Docker image — `backend/Dockerfile` (already
+in this repo) handles that, a multi-stage build that compiles with
+Maven and runs on a slim JRE. Steps:
+
+1. From the Render dashboard: **New +** → **Web Service**.
+2. Connect your GitHub repo and pick this one.
+3. **Root Directory**: `backend` (this is a monorepo — Render needs to
+   know the Dockerfile lives in the `backend` subfolder, not the repo root).
+4. Render should auto-detect the Dockerfile and offer the **Docker**
+   runtime — confirm that's selected rather than trying to guess a
+   native build/start command.
+5. Instance type: **Free** is fine to start.
+6. Under **Environment Variables**, add anything from
+   `application.properties` you want to override — e.g.
+   `ELEVENLABS_WEBHOOK_SECRET` if you're using the webhook, or
+   `APP_CORS_ALLOWED_ORIGINS` if you need to allow an origin beyond the
+   `gridline.wiki` default.
+7. Click **Create Web Service**. Render builds the Docker image and
+   deploys it — first build usually takes a few minutes.
+8. Once it's live you'll get a URL like
+   `https://gridline-backend.onrender.com`. That's the value that goes
+   into `VITE_API_BASE` in the next step.
+
+One thing worth knowing: Render's free tier spins a service down after
+15 minutes of inactivity, so the first request after a quiet period can
+take 30–60 seconds while it wakes back up. Fine for a demo; worth a
+paid instance if that latency matters later.
+
 Once it's live you'll have a URL like `https://gridline-api.onrender.com`
 — you can point a subdomain like `api.gridline.wiki` at it later, or
 just use that URL directly.
