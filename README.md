@@ -31,7 +31,68 @@ Opens on `http://localhost:5173`. The dev server proxies `/api` and
 `/notes` requests to the backend on port 3001 (see `vite.config.js`),
 so the browser never has to deal with CORS during local development.
 
-## How it fits together
+## Deploying the frontend to gridline.wiki
+
+The frontend is a static Vite build — it doesn't need a Node server in
+production, just somewhere to host static files and point the domain at.
+The backend is a separate Spring Boot app and needs its own host (see
+below); the two don't have to live on the same platform.
+
+**1. Pick a static host for the frontend.** Any of these work well with
+a custom domain, have a generous free tier, and deploy straight from a
+git push:
+- **Cloudflare Pages** — good default if you ever move the domain's DNS
+  to Cloudflare too, since the domain and hosting end up in one place.
+- **Vercel** or **Netlify** — equally simple, huge ecosystem, easiest if
+  you're already using GitHub.
+
+Whichever you pick, the setup is the same shape: connect the repo (or
+drag-and-drop the `frontend` folder), set the build command to
+`npm run build`, the output directory to `dist`, and add the domain
+`gridline.wiki` (and usually `www.gridline.wiki`) in that project's
+domain settings. Each host will give you either a CNAME target or an
+apex/ALIAS record to add — you add that at whichever registrar you
+bought `gridline.wiki` through, then wait for DNS to propagate
+(usually minutes, sometimes a couple hours).
+
+**2. Host the backend somewhere.** You don't have a platform for this
+yet either — **Render** or **Railway** are the least fussy for a plain
+Spring Boot app (point it at `backend/`, it detects the Maven build).
+Once it's live you'll have a URL like `https://gridline-api.onrender.com`
+— you can point a subdomain like `api.gridline.wiki` at it later, or
+just use that URL directly.
+
+> **If the deploy step fails with a Vite-version error** ("cannot be
+> automatically configured... update the Vite version to at least
+> 6.0.0"): Cloudflare's git integration tries to auto-configure the
+> Cloudflare Vite plugin during `wrangler deploy`, which needs Vite 6+.
+> `frontend/wrangler.jsonc` heads this off by declaring the project as a
+> plain static-assets site up front, so Wrangler skips that
+> auto-detection and just publishes `dist/` directly — no Vite upgrade
+> needed. If you still see the error, confirm `wrangler.jsonc` made it
+> into the repo and that the project's root directory in Cloudflare's
+> build settings is set to `frontend`.
+
+**3. Wire the frontend to the backend.** Copy `frontend/.env.example` to
+`frontend/.env.production` and set:
+
+```
+VITE_API_BASE=https://<wherever-your-backend-ends-up>
+```
+
+Rebuild (`npm run build`) after setting this — Vite bakes env vars in
+at build time, not runtime. Locally, leave `.env.production` out
+entirely; `vite.config.js`'s dev proxy handles `/api` and `/notes`
+automatically.
+
+**4. Lock down CORS.** `backend/src/main/resources/application.properties`
+already defaults `app.cors.allowed-origins` to `https://gridline.wiki`
+(plus `www` and localhost for dev). If you add a staging URL or change
+the domain, override it with the `APP_CORS_ALLOWED_ORIGINS` env var
+(comma-separated) on whatever host runs the backend — no code change
+needed.
+
+
 
 - **Real map**: the frontend renders an actual [Leaflet](https://leafletjs.com/)
   map (OpenStreetMap/CARTO dark tiles) centered on **Blacksburg, VA

@@ -7,7 +7,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*") // demo only — restrict to your frontend's origin before this ships anywhere real
 public class MapDataController {
 
     private final IntersectionRegistry intersections;

@@ -19,10 +19,13 @@ export default function App() {
   const [queue, setQueue] = useState([]);
   const [openCallId, setOpenCallId] = useState(null);
   const [activePin, setActivePin] = useState(null);
-  const [dispatches, setDispatches] = useState({}); // callId -> { unitId, eta, status }
-  const [routes, setRoutes] = useState({});         // unitId -> [[lat,lng], ...]
 
-  const animRefs = useRef({});     // unitId -> requestAnimationFrame id
+  // One entry per unit currently committed to a call: real (uncompressed)
+  // ETA counts down in wall-clock seconds, same as it would on a real CAD board.
+  const [unitDispatches, setUnitDispatches] = useState({}); // unitId -> { callId, type, etaSeconds, status, targetLat, targetLng }
+  const [routes, setRoutes] = useState({});                 // unitId -> [[lat,lng], ...]
+
+  const animRefs = useRef({});
   const shiftTimerRef = useRef(null);
 
   useEffect(() => {
@@ -54,7 +57,6 @@ export default function App() {
 
   function handleOpenCall(id) {
     setOpenCallId(id);
-    setQueue(q => q.map(c => (c.id === id ? { ...c, status: 'open' } : c)));
     const call = queue.find(c => c.id === id);
     if (call) setActivePin({ code: call.code, lat: call.lat, lng: call.lng });
   }
@@ -69,11 +71,12 @@ export default function App() {
     }));
   }
 
-  async function handleDispatch() {
-    if (!openCall) return;
+  // The dispatcher picks exactly which units respond — no auto-assignment.
+  async function handleDispatchUnits(unitIds) {
+    if (!openCall || unitIds.length === 0) return;
     let result;
     try {
-      result = await dispatchCall(openCall.code, openCall.type);
+      result = await dispatchCall(openCall.code, unitIds);
     } catch (e) {
       setQueue(q => q.map(c => (c.id === openCallId
         ? { ...c, transcript: [...c.transcript, { from: 'dispatcher', text: `⚠ ${e.message}` }] }
@@ -81,34 +84,47 @@ export default function App() {
       return;
     }
 
-    setQueue(q => q.map(c => (c.id === openCallId ? { ...c, status: 'dispatched' } : c)));
+    if (result.errors && result.errors.length) {
+      setQueue(q => q.map(c => (c.id === openCallId
+        ? { ...c, transcript: [...c.transcript, { from: 'dispatcher', text: `⚠ ${result.errors.join('; ')}` }] }
+        : c)));
+    }
 
-    const { unitId, startLat, startLng, targetLat, targetLng } = result;
-    let etaMinutes = result.etaMinutes;
+    setQueue(q => q.map(c => (c.id === openCallId ? { ...c, status: 'dispatched' } : c)));
+    refreshResponders();
+
+    for (const unit of result.dispatched) {
+      dispatchOneUnit(unit, openCallId);
+    }
+  }
+
+  async function dispatchOneUnit(unit, callId) {
+    const { unitId, type, startLat, startLng, targetLat, targetLng } = unit;
+    let etaSeconds = unit.etaMinutes * 60;
     let path = [[startLat, startLng], [targetLat, targetLng]];
 
     try {
       const route = await fetchDrivingRoute(startLat, startLng, targetLat, targetLng);
       path = route.coords;
-      etaMinutes = Math.max(1, Math.round(route.durationSeconds / 60));
+      etaSeconds = route.durationSeconds; // real routed travel time — not sped up
     } catch {
-      // road routing unavailable — fall back to a straight line so the
-      // demo still works, ETA keeps the backend's straight-line estimate
+      // routing service unavailable — fall back to the straight-line ETA
     }
 
     setRoutes(r => ({ ...r, [unitId]: path }));
-    setDispatches(d => ({ ...d, [openCallId]: { unitId, eta: etaMinutes, status: 'En route' } }));
+    setUnitDispatches(d => ({ ...d, [unitId]: { callId, type, etaSeconds, status: 'En route', targetLat, targetLng } }));
 
-    animateAlongRoute(unitId, path, etaMinutes, openCallId, targetLat, targetLng);
+    animateAlongRoute(unitId, path, etaSeconds, targetLat, targetLng);
   }
 
-  function animateAlongRoute(unitId, path, etaMinutes, callId, targetLat, targetLng) {
+  // Moves the unit marker along the real route over the *actual* travel
+  // time — a 6-minute ETA takes 6 real minutes, matching how long a unit
+  // would really take to reach the scene.
+  function animateAlongRoute(unitId, path, etaSeconds, targetLat, targetLng) {
     if (animRefs.current[unitId]) cancelAnimationFrame(animRefs.current[unitId]);
 
     const interpolate = makePathInterpolator(path);
-    // Real driving time compressed into a watchable animation; the ETA
-    // shown to the dispatcher is still the real, routed estimate.
-    const playbackMs = Math.min(16000, Math.max(4000, etaMinutes * 1200));
+    const playbackMs = Math.max(1000, etaSeconds * 1000);
     let t0 = null;
 
     function step(ts) {
@@ -117,13 +133,13 @@ export default function App() {
       const [lat, lng] = interpolate(p);
 
       setResponders(prev => prev.map(r => (r.id === unitId ? { ...r, lat, lng } : r)));
-      const remaining = Math.max(0, Math.round(etaMinutes * (1 - p)));
-      setDispatches(d => (d[callId] ? { ...d, [callId]: { ...d[callId], eta: remaining } } : d));
+      const remaining = Math.max(0, etaSeconds * (1 - p));
+      setUnitDispatches(d => (d[unitId] ? { ...d, [unitId]: { ...d[unitId], etaSeconds: remaining } } : d));
 
       if (p < 1) {
         animRefs.current[unitId] = requestAnimationFrame(step);
       } else {
-        setDispatches(d => (d[callId] ? { ...d, [callId]: { ...d[callId], status: 'On scene', eta: 0 } } : d));
+        setUnitDispatches(d => (d[unitId] ? { ...d, [unitId]: { ...d[unitId], status: 'On scene', etaSeconds: 0 } } : d));
         setRoutes(r => { const next = { ...r }; delete next[unitId]; return next; });
         arrive(unitId, targetLat, targetLng).then(refreshResponders).catch(() => {});
       }
@@ -136,9 +152,10 @@ export default function App() {
     setActivePin(null);
   }
 
+  const dispatchList = Object.entries(unitDispatches).map(([unitId, d]) => ({ unitId, ...d }));
   const availCount = responders.filter(r => !r.busy).length;
-  const enRouteCount = Object.values(dispatches).filter(d => d.status === 'En route').length;
-  const onSceneCount = Object.values(dispatches).filter(d => d.status === 'On scene').length;
+  const enRouteCount = dispatchList.filter(d => d.status === 'En route').length;
+  const onSceneCount = dispatchList.filter(d => d.status === 'On scene').length;
   const waitingCalls = queue.filter(c => c.status === 'waiting');
   const center = [mapConfig.centerLat, mapConfig.centerLng];
 
@@ -174,29 +191,34 @@ export default function App() {
               {queue.length === 0 && (
                 <div style={{ color: 'var(--ink-muted)', fontSize: 13, textAlign: 'center', marginTop: 30 }}>No calls yet.</div>
               )}
-              {queue.map(call => (
-                <div
-                  key={call.id}
-                  onClick={() => handleOpenCall(call.id)}
-                  style={{
-                    cursor: 'pointer', padding: 14, borderRadius: 10, background: 'var(--surface)',
-                    border: '1px solid ' + (openCallId === call.id ? 'var(--accent)' : 'var(--line)')
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontWeight: 700, fontSize: 14 }}>{call.title}</span>
-                    {call.status === 'dispatched' ? (
-                      <span style={{ fontSize: 11, color: 'var(--status)', fontWeight: 700 }}>DISPATCHED</span>
-                    ) : (
-                      <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>OPEN</span>
-                    )}
+              {queue.map(call => {
+                const assigned = dispatchList.filter(d => d.callId === call.id);
+                return (
+                  <div
+                    key={call.id}
+                    onClick={() => handleOpenCall(call.id)}
+                    style={{
+                      cursor: 'pointer', padding: 14, borderRadius: 10, background: 'var(--surface)',
+                      border: '1px solid ' + (openCallId === call.id ? 'var(--accent)' : 'var(--line)')
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 14 }}>{call.title}</span>
+                      {assigned.length > 0 ? (
+                        <span style={{ fontSize: 11, color: 'var(--status)', fontWeight: 700 }}>
+                          {assigned.length} UNIT{assigned.length > 1 ? 'S' : ''}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>OPEN</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--ink-secondary)', marginBottom: 8, lineHeight: 1.4 }}>{call.opening}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--ink-muted)' }}>
+                      {call.locationName} · caller: {call.caller}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12.5, color: 'var(--ink-secondary)', marginBottom: 8, lineHeight: 1.4 }}>{call.opening}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--ink-muted)' }}>
-                    {call.locationName} · caller: {call.caller}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -216,10 +238,11 @@ export default function App() {
             {openCall && (
               <CallPanel
                 call={openCall}
+                allResponders={responders}
+                unitsForCall={dispatchList.filter(d => d.callId === openCall.id)}
                 onClose={closeCallPanel}
                 onAskQuestion={handleAskQuestion}
-                onDispatch={handleDispatch}
-                dispatchInfo={dispatches[openCall.id]}
+                onDispatchUnits={handleDispatchUnits}
               />
             )}
           </div>

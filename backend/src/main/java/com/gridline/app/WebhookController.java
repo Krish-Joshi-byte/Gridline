@@ -76,7 +76,6 @@ public class WebhookController {
 
     // Responder-facing lookup — the React app calls this when a
     // dispatcher opens a code, to show any AI-handled call notes for it.
-    @CrossOrigin(origins = "*") // demo only — restrict to your frontend's origin before this ships anywhere real
     @GetMapping("/notes/{code}")
     public Map<String, Object> getNotes(@PathVariable String code) {
         String upper = code.toUpperCase();

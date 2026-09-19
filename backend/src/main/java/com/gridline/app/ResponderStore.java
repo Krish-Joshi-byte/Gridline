@@ -30,24 +30,19 @@ public class ResponderStore {
         return new ArrayList<>(responders);
     }
 
-    // Scores available responders of the matching type by straight-line
-    // (haversine) distance and returns the closest one, marking it busy.
-    // Actual driving distance/ETA for the map animation is computed
-    // client-side against the real road network.
-    public synchronized Optional<Responder> dispatchNearest(String type, double targetLat, double targetLng) {
-        Responder best = null;
-        double bestDist = Double.MAX_VALUE;
+    // Marks a specific, dispatcher-chosen unit busy and returns it —
+    // no auto-assignment. Fails if the unit doesn't exist or is already
+    // committed elsewhere, so a race between two dispatchers (or a
+    // stale UI) can't double-book a unit.
+    public synchronized Optional<Responder> dispatchSpecific(String unitId) {
         for (Responder r : responders) {
-            if (!r.type.equals(type) || r.busy) continue;
-            double d = GeoUtil.haversineKm(r.lat, r.lng, targetLat, targetLng);
-            if (d < bestDist) {
-                bestDist = d;
-                best = r;
+            if (r.id.equals(unitId)) {
+                if (r.busy) return Optional.empty();
+                r.busy = true;
+                return Optional.of(r);
             }
         }
-        if (best == null) return Optional.empty();
-        best.busy = true;
-        return Optional.of(best);
+        return Optional.empty();
     }
 
     // Called once the frontend's animation finishes, so the unit
