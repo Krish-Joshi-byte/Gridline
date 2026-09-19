@@ -1,0 +1,49 @@
+{
+ "version": "floorplan-v4-java",
+ "units": "metres",
+ "up": "y",
+ "source_image": "office_floor.png",
+ "meta": {
+  "imageWidthPx": 528,
+  "imageHeightPx": 336,
+  "pixelsPerMetre": 40.0,
+  "wallHeightM": 2.6,
+  "widthM": 13.2,
+  "depthM": 8.4,
+  "roomCount": 2,
+  "wallRectCount": 20,
+  "wallPolarityInverted": false,
+  "warnings": [
+   "Scale comes from --calib or the ppm argument -- check it against a printed dimension.",
+   "Rooms are split by pinching free space at doorways; an opening wider than --door merges two rooms.",
+   "Openings are not classified: doors, windows and cased openings are all just gaps in a wall.",
+   "Wall height is a constant assumption, not measured from the drawing."
+  ]
+ },
+ "walls": [
+  [0.5,0.425,12.7,0.2],
+  [0.4,0.5,0.1,3.6],
+  [0.5,0.625,0.1,3.475],
+  [4.65,0.625,0.2,2.4],
+  [8.9,0.625,0.2,2.4],
+  [0.6,2.825,1.725,0.2],
+  [3.075,2.825,1.575,0.2],
+  [4.85,2.825,1.725,0.2],
+  [7.325,2.825,1.575,0.2],
+  [9.1,2.825,1.8,0.2],
+  [11.625,2.825,1.575,0.2],
+  [0.4,4.825,0.2,3.575],
+  [0.6,6.025,1.1,0.2],
+  [2.425,6.025,2.475,0.2],
+  [5.625,6.025,2.475,0.2],
+  [8.825,6.025,2.475,0.2],
+  [12.025,6.025,1.175,0.2],
+  [3.625,6.225,0.2,2.175],
+  [6.825,6.225,0.2,2.175],
+  [10.025,6.225,0.2,2.175]
+ ],
+ "rooms": [
+  {"id": 1, "label": "Room 1", "xM": 0.6, "zM": 0.625, "widthM": 4.05, "depthM": 2.3, "clearWidthM": 4.05, "clearDepthM": 2.2, "areaM2": 8.99, "areaSqFt": 96.71, "floor": [[0.6,0.625,4.05,2.2],[2.325,2.825,0.75,0.1]]},
+  {"id": 2, "label": "Room 2", "xM": 4.85, "zM": 0.625, "widthM": 4.05, "depthM": 2.3, "clearWidthM": 4.05, "clearDepthM": 2.2, "areaM2": 8.99, "areaSqFt": 96.71, "floor": [[4.85,0.625,4.05,2.2],[6.575,2.825,0.75,0.1]]}
+ ]
+}

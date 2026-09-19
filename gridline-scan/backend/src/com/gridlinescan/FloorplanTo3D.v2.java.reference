@@ -1,0 +1,388 @@
+package com.gridlinescan;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.*;
+
+/**
+ * Gridline Scan v2 -- floor-plan-to-3D pipeline, pure Java port.
+ *
+ * Deliberately uses ONLY the JDK (java.awt.image + javax.imageio) -- no OpenCV,
+ * no Maven dependency at all -- because this sandbox has no outbound network
+ * access, so nothing beyond the JDK itself can be fetched. Every step that the
+ * Python prototype (floorplan_to_3d.py) did with OpenCV is reimplemented here
+ * by hand: Otsu thresholding, binary morphology (erode/dilate), connected
+ * components (BFS flood fill), and a coarse wall raster grid. See HANDOFF.md
+ * for why each of these choices was made (rasterized walls instead of vector
+ * rectangles, auto-detected wall/floor polarity, etc.) -- the reasoning
+ * carries over unchanged from the Python version.
+ *
+ * Usage:
+ *   java FloorplanTo3D <imagePath> [pixelsPerMetre] [outDir]
+ *
+ * Compile (no Maven needed):
+ *   javac -d out src/com/gridlinescan/FloorplanTo3D.java
+ *   java -cp out com.gridlinescan.FloorplanTo3D input/plan.png 40 output
+ */
+public class FloorplanTo3D {
+
+    static final double WALL_HEIGHT_M = 2.6;
+    static final double DEFAULT_PPM = 40.0;
+    static final double CELL_M = 0.2;
+    static final boolean DEBUG = "1".equals(System.getenv("FP_DEBUG"));
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 1) {
+            System.out.println("usage: FloorplanTo3D <image> [pixels_per_metre] [out_dir]");
+            System.exit(1);
+        }
+        String imagePath = args[0];
+        double ppm = args.length > 1 ? Double.parseDouble(args[1]) : DEFAULT_PPM;
+        String outDir = args.length > 2 ? args[2] : "output";
+        new File(outDir).mkdirs();
+
+        BufferedImage img = ImageIO.read(new File(imagePath));
+        if (img == null) throw new RuntimeException("could not read image: " + imagePath);
+        int w = img.getWidth(), h = img.getHeight();
+
+        int[] gray = toGrayscale(img);
+
+        // --- 1. Wall mask: try a fixed near-black threshold first (this matches
+        // both plain B&W CAD-style plans AND colored real-estate plans with
+        // black wall outlines, e.g. the 3-color-fill style with room labels
+        // and dimension text -- global Otsu breaks on those because a bright
+        // floor-fill color can end up on the same side of the split as the
+        // wall lines). Fall back to Otsu + auto polarity (minority-area wins)
+        // for anything where walls aren't simply "near black", e.g. white
+        // walls on a colored/dark floor in isometric marketing renderings.
+        final int NEAR_BLACK = 70;
+        boolean[] nearBlackMask = new boolean[w * h];
+        for (int i = 0; i < gray.length; i++) nearBlackMask[i] = gray[i] <= NEAR_BLACK;
+        double fracNearBlack = fraction(nearBlackMask);
+
+        boolean[] wallMask;
+        boolean invert;
+        if (fracNearBlack > 0.005 && fracNearBlack < 0.30) {
+            wallMask = nearBlackMask;
+            invert = false;
+        } else {
+            int otsu = otsuThreshold(gray, w, h);
+            boolean[] darkIsWall = new boolean[w * h];
+            boolean[] lightIsWall = new boolean[w * h];
+            for (int i = 0; i < gray.length; i++) {
+                darkIsWall[i] = gray[i] <= otsu;
+                lightIsWall[i] = gray[i] > otsu;
+            }
+            double fracDark = fraction(darkIsWall);
+            double fracLight = fraction(lightIsWall);
+            invert = fracLight < fracDark; // walls should be the minority of the image
+            wallMask = invert ? lightIsWall : darkIsWall;
+        }
+
+        // --- 2. Morphological cleanup: open (3x3) then close (7x7) ---
+        wallMask = erode(wallMask, w, h, 1);
+        wallMask = dilate(wallMask, w, h, 1);   // = open
+        wallMask = dilate(wallMask, w, h, 3);
+        wallMask = erode(wallMask, w, h, 3);    // = close
+
+        // --- 3. Room segmentation: connected components of free (non-wall) space ---
+        boolean[] free = new boolean[w * h];
+        for (int i = 0; i < free.length; i++) free[i] = !wallMask[i];
+        List<Room> rooms = segmentRooms(free, w, h, ppm);
+
+        // --- 4. Wall rasterization onto a coarse grid ---
+        int cellPx = Math.max(1, (int) Math.round(CELL_M * ppm));
+        List<int[]> wallCells = rasterizeWalls(wallMask, w, h, cellPx);
+
+        // --- 5. Write outputs ---
+        String base = new File(imagePath).getName().replaceAll("\\.[^.]+$", "");
+        String jsonPath = outDir + "/" + base + ".scene.json";
+        writeSceneJson(jsonPath, base, w, h, ppm, invert, rooms, wallCells, cellPx);
+
+        String debugPath = outDir + "/" + base + ".debug.png";
+        writeDebugImage(debugPath, img, wallMask, rooms, w, h);
+
+        System.out.println("scene json: " + jsonPath);
+        System.out.println("debug png : " + debugPath);
+        System.out.printf("rooms=%d wallCells=%d size=%.2fx%.2f m invertedPolarity=%b%n",
+                rooms.size(), wallCells.size(), w / ppm, h / ppm, invert);
+    }
+
+    // ---------- image helpers ----------
+
+    static int[] toGrayscale(BufferedImage img) {
+        int w = img.getWidth(), h = img.getHeight();
+        int[] out = new int[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = img.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+                out[y * w + x] = (int) Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+            }
+        }
+        return out;
+    }
+
+    static int otsuThreshold(int[] gray, int w, int h) {
+        int[] hist = new int[256];
+        for (int v : gray) hist[v]++;
+        int total = gray.length;
+        double sum = 0;
+        for (int t = 0; t < 256; t++) sum += t * hist[t];
+        double sumB = 0;
+        int wB = 0;
+        double maxVar = 0;
+        int threshold = 127;
+        for (int t = 0; t < 256; t++) {
+            wB += hist[t];
+            if (wB == 0) continue;
+            int wF = total - wB;
+            if (wF == 0) break;
+            sumB += t * hist[t];
+            double mB = sumB / wB;
+            double mF = (sum - sumB) / wF;
+            double varBetween = (double) wB * wF * (mB - mF) * (mB - mF);
+            if (varBetween > maxVar) {
+                maxVar = varBetween;
+                threshold = t;
+            }
+        }
+        return threshold;
+    }
+
+    static double fraction(boolean[] mask) {
+        int c = 0;
+        for (boolean b : mask) if (b) c++;
+        return (double) c / mask.length;
+    }
+
+    static boolean[] dilate(boolean[] mask, int w, int h, int radius) {
+        boolean[] out = new boolean[mask.length];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                boolean found = false;
+                for (int dy = -radius; dy <= radius && !found; dy++) {
+                    int ny = y + dy;
+                    if (ny < 0 || ny >= h) continue;
+                    for (int dx = -radius; dx <= radius; dx++) {
+                        int nx = x + dx;
+                        if (nx < 0 || nx >= w) continue;
+                        if (mask[ny * w + nx]) { found = true; break; }
+                    }
+                }
+                out[y * w + x] = found;
+            }
+        }
+        return out;
+    }
+
+    static boolean[] erode(boolean[] mask, int w, int h, int radius) {
+        // Border handling: clamp to the edge (like OpenCV's default
+        // BORDER_REPLICATE) instead of treating "off the edge" as background.
+        // Treating off-edge as background silently erases any wall that sits
+        // exactly at the image border on every erosion pass, which is a real
+        // failure mode (a floor plan's exterior wall is very often right at
+        // or near the image edge) -- this bit us on a test image and is worth
+        // guarding against generally.
+        boolean[] out = new boolean[mask.length];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                boolean all = true;
+                for (int dy = -radius; dy <= radius && all; dy++) {
+                    int ny = Math.min(h - 1, Math.max(0, y + dy));
+                    for (int dx = -radius; dx <= radius; dx++) {
+                        int nx = Math.min(w - 1, Math.max(0, x + dx));
+                        if (!mask[ny * w + nx]) { all = false; break; }
+                    }
+                }
+                out[y * w + x] = all;
+            }
+        }
+        return out;
+    }
+
+    // ---------- room segmentation ----------
+
+    static class Room {
+        int minX, minY, maxX, maxY, areaPx;
+        List<int[]> pixels; // sparse-ish sampling not needed; we keep a boolean mask via bbox+labels instead
+    }
+
+    static List<Room> segmentRooms(boolean[] free, int w, int h, double ppm) {
+        int[] label = new int[w * h];
+        Arrays.fill(label, -1);
+        List<Room> rooms = new ArrayList<>();
+        double minAreaPx = 1.5 * ppm * ppm; // drop anything smaller than 1.5 sqm as noise/text
+        int[] qx = new int[w * h];
+        int[] qy = new int[w * h];
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int idx = y * w + x;
+                if (!free[idx] || label[idx] != -1) continue;
+                // BFS flood fill (4-connectivity)
+                int head = 0, tail = 0;
+                qx[tail] = x; qy[tail] = y; tail++;
+                label[idx] = -2; // being processed marker for this component (temporary id set after)
+                int minX = x, maxX = x, minY = y, maxY = y, area = 0;
+                boolean touchesBorder = false;
+                int compId = rooms.size(); // provisional
+                List<Integer> pixIdx = new ArrayList<>();
+                while (head < tail) {
+                    int cx = qx[head], cy = qy[head]; head++;
+                    int cidx = cy * w + cx;
+                    if (label[cidx] != -2 && label[cidx] != -1) continue;
+                    label[cidx] = compId;
+                    pixIdx.add(cidx);
+                    area++;
+                    minX = Math.min(minX, cx); maxX = Math.max(maxX, cx);
+                    minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
+                    if (cx <= 1 || cy <= 1 || cx >= w - 2 || cy >= h - 2) touchesBorder = true;
+                    int[][] neigh = {{cx+1,cy},{cx-1,cy},{cx,cy+1},{cx,cy-1}};
+                    for (int[] n : neigh) {
+                        int nx = n[0], ny = n[1];
+                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                        int nidx = ny * w + nx;
+                        if (free[nidx] && label[nidx] == -1) {
+                            label[nidx] = -2;
+                            qx[tail] = nx; qy[tail] = ny; tail++;
+                        }
+                    }
+                }
+                if (area >= minAreaPx && !touchesBorder) {
+                    Room r = new Room();
+                    r.minX = minX; r.maxX = maxX; r.minY = minY; r.maxY = maxY; r.areaPx = area;
+                    rooms.add(r);
+                    if (DEBUG) System.err.println("component KEPT area=" + area + " bbox=" + minX + "," + minY + "-" + maxX + "," + maxY);
+                } else {
+                    if (DEBUG) System.err.println("component dropped area=" + area + " border=" + touchesBorder + " bbox=" + minX + "," + minY + "-" + maxX + "," + maxY);
+                    // relabel these pixels as "rejected" so we don't retry them, but not a kept room
+                    for (int pidx : pixIdx) label[pidx] = -3;
+                }
+            }
+        }
+        return rooms;
+    }
+
+    // ---------- wall rasterization ----------
+
+    static List<int[]> rasterizeWalls(boolean[] wallMask, int w, int h, int cellPx) {
+        int cols = (w + cellPx - 1) / cellPx;
+        int rows = (h + cellPx - 1) / cellPx;
+        List<int[]> cells = new ArrayList<>();
+        for (int r = 0; r < rows; r++) {
+            int y0 = r * cellPx, y1 = Math.min((r + 1) * cellPx, h);
+            for (int c = 0; c < cols; c++) {
+                int x0 = c * cellPx, x1 = Math.min((c + 1) * cellPx, w);
+                int total = (y1 - y0) * (x1 - x0);
+                if (total == 0) continue;
+                int occ = 0;
+                for (int y = y0; y < y1; y++) {
+                    int base = y * w;
+                    for (int x = x0; x < x1; x++) if (wallMask[base + x]) occ++;
+                }
+                if ((double) occ / total > 0.35) cells.add(new int[]{c, r});
+            }
+        }
+        return cells;
+    }
+
+    // ---------- output ----------
+
+    static void writeSceneJson(String path, String sourceName, int w, int h, double ppm, boolean invert,
+                                List<Room> rooms, List<int[]> wallCells, int cellPx) throws Exception {
+        double cellM = CELL_M;
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\n");
+        sb.append(" \"version\": \"floorplan-v1-java\",\n");
+        sb.append(" \"units\": \"metres\",\n");
+        sb.append(" \"up\": \"y\",\n");
+        sb.append(" \"source_image\": \"").append(sourceName).append(".png\",\n");
+        sb.append(" \"meta\": {\n");
+        sb.append("  \"imageWidthPx\": ").append(w).append(",\n");
+        sb.append("  \"imageHeightPx\": ").append(h).append(",\n");
+        sb.append("  \"pixelsPerMetre\": ").append(ppm).append(",\n");
+        sb.append("  \"wallHeightM\": ").append(WALL_HEIGHT_M).append(",\n");
+        sb.append("  \"widthM\": ").append(round2(w / ppm)).append(",\n");
+        sb.append("  \"depthM\": ").append(round2(h / ppm)).append(",\n");
+        sb.append("  \"roomCount\": ").append(rooms.size()).append(",\n");
+        sb.append("  \"wallCellCount\": ").append(wallCells.size()).append(",\n");
+        sb.append("  \"wallCellSizeM\": ").append(cellM).append(",\n");
+        sb.append("  \"wallPolarityInverted\": ").append(invert).append(",\n");
+        sb.append("  \"warnings\": [\n");
+        sb.append("   \"Scale is assumed (pixelsPerMetre) unless calibrated -- verify before tactical use.\",\n");
+        sb.append("   \"Room segmentation merges rooms connected by an open doorway -- see HANDOFF.md.\",\n");
+        sb.append("   \"Java port: pure-JDK image processing (no OpenCV/Maven); numerically simpler than the Python version, retune thresholds if results look worse.\"\n");
+        sb.append("  ]\n");
+        sb.append(" },\n");
+        sb.append(" \"rooms\": [\n");
+        for (int i = 0; i < rooms.size(); i++) {
+            Room r = rooms.get(i);
+            double xM = r.minX / ppm, zM = r.minY / ppm;
+            double wM = (r.maxX - r.minX + 1) / ppm, dM = (r.maxY - r.minY + 1) / ppm;
+            double areaM2 = r.areaPx / (ppm * ppm);
+            sb.append("  {\"id\": ").append(i)
+              .append(", \"label\": \"Room ").append(i + 1).append("\"")
+              .append(", \"xM\": ").append(round2(xM))
+              .append(", \"zM\": ").append(round2(zM))
+              .append(", \"widthM\": ").append(round2(wM))
+              .append(", \"depthM\": ").append(round2(dM))
+              .append(", \"areaM2\": ").append(round2(areaM2))
+              .append("}");
+            sb.append(i < rooms.size() - 1 ? ",\n" : "\n");
+        }
+        sb.append(" ],\n");
+        sb.append(" \"wallCells\": [\n");
+        for (int i = 0; i < wallCells.size(); i++) {
+            int[] c = wallCells.get(i);
+            sb.append("  [").append(c[0]).append(", ").append(c[1]).append("]");
+            sb.append(i < wallCells.size() - 1 ? ",\n" : "\n");
+        }
+        sb.append(" ]\n");
+        sb.append("}\n");
+        try (java.io.FileWriter fw = new java.io.FileWriter(path)) {
+            fw.write(sb.toString());
+        }
+    }
+
+    static double round2(double v) {
+        return Math.round(v * 100.0) / 100.0;
+    }
+
+    static void writeDebugImage(String path, BufferedImage src, boolean[] wallMask, List<Room> rooms,
+                                 int w, int h) throws Exception {
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        int[] palette = {0x2f81f7, 0x3fb950, 0xd29922, 0xf85149, 0xa371f7, 0x39c5cf};
+        // base = original image, dimmed
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = src.getRGB(x, y);
+                out.setRGB(x, y, rgb);
+            }
+        }
+        // tint rooms via bbox rectangle fill at low alpha (approx -- true pixel mask not retained to save memory)
+        for (int i = 0; i < rooms.size(); i++) {
+            Room r = rooms.get(i);
+            int color = palette[i % palette.length];
+            int cr = (color >> 16) & 0xFF, cg = (color >> 8) & 0xFF, cb = color & 0xFF;
+            for (int y = r.minY; y <= r.maxY; y++) {
+                for (int x = r.minX; x <= r.maxX; x++) {
+                    int rgb = out.getRGB(x, y);
+                    int orr = (rgb >> 16) & 0xFF, og = (rgb >> 8) & 0xFF, ob = rgb & 0xFF;
+                    int nr = (int) (0.6 * orr + 0.4 * cr);
+                    int ng = (int) (0.6 * og + 0.4 * cg);
+                    int nb = (int) (0.6 * ob + 0.4 * cb);
+                    out.setRGB(x, y, (nr << 16) | (ng << 8) | nb);
+                }
+            }
+        }
+        // walls in red
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (wallMask[y * w + x]) out.setRGB(x, y, 0xFF0000);
+            }
+        }
+        ImageIO.write(out, "png", new File(path));
+    }
+}
