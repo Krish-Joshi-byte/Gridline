@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { useConversation } from '@elevenlabs/react';
 import CallNotesPanel from './CallNotesPanel.jsx';
 import { haversineMeters } from '../routing.js';
+import { getElevenLabsSession } from '../api.js';
 
 const TYPE_LABEL = { police: 'Police', fire: 'Fire', medical: 'EMS' };
 const TYPE_ORDER = ['police', 'fire', 'medical'];
@@ -29,17 +31,66 @@ function estimateEtaMinutes(unit, call) {
   return Math.max(1, Math.round((distKm / AVG_URBAN_SPEED_KMH) * 60));
 }
 
-export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onDispatchUnits }) {
+export default function CallPanel({ call, allResponders, unitsForCall, onClose, onAskQuestion, onLiveTranscript, onDispatchUnits }) {
   const [connected, setConnected] = useState(0);
   const [selected, setSelected] = useState(new Set());
+  const [voiceError, setVoiceError] = useState(null);
   const scrollRef = useRef(null);
+
+  // Real voice conversation with the ElevenLabs Conversational AI agent —
+  // replaces clicking through the canned Q&A when you actually want to
+  // talk (as the caller) instead of texting through the script. Each
+  // turn ElevenLabs recognizes gets appended to the same transcript via
+  // onLiveTranscript; ElevenLabs' own post-call webhook fills in the AI
+  // call notes below once the conversation ends.
+  const conversation = useConversation({
+    onConnect: () => setVoiceError(null),
+    onMessage: (msg) => {
+      const text = msg?.message ?? '';
+      if (!text) return;
+      onLiveTranscript({ from: msg.source === 'user' ? 'caller' : 'dispatcher', text });
+    },
+    onError: (err) => setVoiceError(typeof err === 'string' ? err : (err?.message || 'Voice call error'))
+  });
 
   useEffect(() => {
     setConnected(0);
     setSelected(new Set());
+    setVoiceError(null);
     const t = setInterval(() => setConnected(c => c + 1), 1000);
-    return () => clearInterval(t);
+    // Hang up any live voice session when switching to a different call
+    // or closing the panel — it shouldn't keep running in the background.
+    return () => {
+      clearInterval(t);
+      if (conversation.status === 'connected') conversation.endSession();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call.id]);
+
+  async function startVoiceCall() {
+    setVoiceError(null);
+    try {
+      const session = await getElevenLabsSession();
+      const startOpts = session.signed_url
+        ? { signedUrl: session.signed_url }
+        : { agentId: session.agentId };
+      await conversation.startSession({
+        ...startOpts,
+        dynamicVariables: {
+          code: call.code,
+          incident_type: call.title,
+          location: call.locationName,
+          caller_name: call.caller
+        }
+      });
+    } catch (e) {
+      setVoiceError(e.message || 'Could not start the call');
+    }
+  }
+
+  function endVoiceCall() {
+    conversation.endSession().catch(() => {});
+  }
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -91,6 +142,31 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--status)' }}>
           LINE 1 · CONNECTED {formatClock(connected)}
         </div>
+
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {conversation.status === 'connected' ? (
+            <button
+              onClick={endVoiceCall}
+              style={{
+                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
+                background: 'transparent', color: 'var(--danger, #e5484d)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+              }}
+            >⏹ End voice call {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
+          ) : (
+            <button
+              onClick={startVoiceCall}
+              disabled={conversation.status === 'connecting'}
+              style={{
+                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
+                background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
+                cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
+              }}
+            >🎙 {conversation.status === 'connecting' ? 'Connecting…' : 'Start voice call'}</button>
+          )}
+        </div>
+        {voiceError && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger, #e5484d)' }}>{voiceError}</div>
+        )}
       </div>
 
       {/* transcript */}
@@ -107,11 +183,11 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         ))}
       </div>
 
-      {/* remaining questions */}
-      {remaining.length > 0 && (
+      {/* remaining questions — scripted fallback for when you're not using the mic */}
+      {remaining.length > 0 && conversation.status !== 'connected' && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--line)' }}>
           <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 6 }}>
-            Details gathered: {totalQuestions - remaining.length}/{totalQuestions}
+            No mic? Ask manually — {totalQuestions - remaining.length}/{totalQuestions} details gathered
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 90, overflowY: 'auto' }}>
             {remaining.map(item => (

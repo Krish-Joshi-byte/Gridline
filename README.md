@@ -12,6 +12,8 @@ Requires Java 17+ and Maven.
 ```
 cd backend
 export ELEVENLABS_WEBHOOK_SECRET=your_signing_secret   # optional for local demo
+export ELEVENLABS_AGENT_ID=agent_xxxxxxxxxxxxxxxxxxxx  # needed for the in-app voice call
+export ELEVENLABS_API_KEY=your_api_key                 # only if the agent is private
 mvn spring-boot:run
 ```
 
@@ -72,9 +74,10 @@ Maven and runs on a slim JRE. Steps:
 5. Instance type: **Free** is fine to start.
 6. Under **Environment Variables**, add anything from
    `application.properties` you want to override — e.g.
-   `ELEVENLABS_WEBHOOK_SECRET` if you're using the webhook, or
-   `APP_CORS_ALLOWED_ORIGINS` if you need to allow an origin beyond the
-   `gridline.wiki` default.
+   `ELEVENLABS_WEBHOOK_SECRET` if you're using the webhook,
+   `ELEVENLABS_AGENT_ID` (and `ELEVENLABS_API_KEY` if the agent is
+   private) for the in-app voice call, or `APP_CORS_ALLOWED_ORIGINS` if
+   you need to allow an origin beyond the `gridline.wiki` default.
 7. Click **Create Web Service**. Render builds the Docker image and
    deploys it — first build usually takes a few minutes.
 8. Once it's live you'll get a URL like
@@ -148,7 +151,40 @@ needed.
   post-call webhook at `POST /webhooks/elevenlabs/post-call` on the
   backend. It extracts a code and a summary from the transcript and
   stores it. The React app's `CallNotesPanel` fetches `GET /notes/:code`
-  for whatever call is currently open.
+  for whatever call is currently open, polling every few seconds so a
+  note that lands after the call ends still shows up.
+- **Live voice call, in the browser**: opening a call in `CallPanel`
+  now has a real "🎙 Start voice call" button, not just the scripted
+  question buttons. It uses ElevenLabs' `@elevenlabs/react` SDK to open
+  an actual mic-based voice conversation with your ElevenLabs agent —
+  so instead of clicking through canned Q&A, you can literally talk to
+  the AI as the caller. Each turn of that real conversation streams
+  into the same transcript UI. When the call ends, ElevenLabs' post-call
+  webhook (above) delivers the summary the normal way.
+
+  **Setup:**
+  1. Create a Conversational AI agent in the
+     [ElevenLabs dashboard](https://elevenlabs.io/app/agents), with a
+     system prompt that plays a 911 dispatcher gathering details about
+     an emergency (severity, location, whether the caller is safe,
+     etc). Point its post-call webhook at `/webhooks/elevenlabs/post-call`
+     as already described above.
+  2. In the agent's **Advanced** settings, add dynamic variables named
+     `code`, `incident_type`, `location`, and `caller_name` — the
+     frontend passes these in automatically for every call so the
+     agent can reference the intersection code the dispatcher is
+     looking at (e.g. "you're speaking about incident {{code}} near
+     {{location}}").
+  3. Set `ELEVENLABS_AGENT_ID` on the backend to that agent's ID.
+  4. Leave the agent **public** for the easiest local demo (no auth) —
+     or flip it to **private** in its Security settings and also set
+     `ELEVENLABS_API_KEY` on the backend; either way the backend's new
+     `GET /api/elevenlabs/session` endpoint hands the frontend whatever
+     it needs (an agent ID, or a short-lived signed URL) without ever
+     putting the API key in the browser.
+  5. `npm install` in `frontend/` to pick up the new `@elevenlabs/react`
+     dependency, then browsers will prompt for microphone access the
+     first time someone clicks "Start voice call".
 
 ## Known shortcuts for the demo
 

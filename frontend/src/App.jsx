@@ -71,6 +71,15 @@ export default function App() {
     }));
   }
 
+  // Fed by CallPanel's live ElevenLabs voice session — each turn of the
+  // real conversation (caller speaking into the mic, the AI's replies)
+  // lands here the same way a scripted question/answer does.
+  function handleLiveTranscript(entry) {
+    setQueue(q => q.map(c => (c.id === openCallId
+      ? { ...c, transcript: [...c.transcript, entry] }
+      : c)));
+  }
+
   // The dispatcher picks exactly which units respond — no auto-assignment.
   async function handleDispatchUnits(unitIds) {
     if (!openCall || unitIds.length === 0) return;
@@ -242,6 +251,7 @@ export default function App() {
                 unitsForCall={dispatchList.filter(d => d.callId === openCall.id)}
                 onClose={closeCallPanel}
                 onAskQuestion={handleAskQuestion}
+                onLiveTranscript={handleLiveTranscript}
                 onDispatchUnits={handleDispatchUnits}
               />
             )}

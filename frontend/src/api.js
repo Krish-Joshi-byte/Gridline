@@ -46,6 +46,16 @@ export async function arrive(unitId, lat, lng) {
   return res.json();
 }
 
+// Returns either { agentId } (public agent) or { signed_url } (private
+// agent) — whichever the backend is configured for. Call this right
+// before starting a voice call; signed URLs are short-lived.
+export async function getElevenLabsSession() {
+  const res = await fetch(`${API_BASE}/api/elevenlabs/session`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not start voice session');
+  return data;
+}
+
 export async function getCallNotes(code) {
   const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(code)}`);
   if (!res.ok) throw new Error('Failed to load call notes');

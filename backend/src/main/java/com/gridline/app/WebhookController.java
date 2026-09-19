@@ -56,7 +56,18 @@ public class WebhookController {
         String summary = data.path("analysis").path("transcript_summary").asText(null);
         String conversationId = data.path("conversation_id").asText(null);
 
-        String code = extractCode(transcript, summary);
+        // The frontend's live voice call passes the intersection code as
+        // a dynamic variable when it starts the session (see CallPanel's
+        // startVoiceCall), and ElevenLabs echoes whatever was passed back
+        // in this field — so this is the exact code, not a guess. Only
+        // fall back to scanning the transcript/summary for calls that
+        // didn't originate from the app (e.g. a real inbound phone call).
+        String dynamicCode = data.path("conversation_initiation_client_data")
+            .path("dynamic_variables").path("code").asText(null);
+
+        String code = (dynamicCode != null && !dynamicCode.isBlank())
+            ? dynamicCode.trim().toUpperCase()
+            : extractCode(transcript, summary);
         if (code == null) {
             System.out.println("No intersection code found in call " + conversationId);
         }

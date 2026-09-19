@@ -16,15 +16,22 @@ export default function CallNotesPanel({ code }) {
     let cancelled = false;
     setStatus('loading');
 
-    getCallNotes(code)
-      .then(data => {
-        if (cancelled) return;
-        setNotes(data.notes || []);
-        setStatus('done');
-      })
-      .catch(() => { if (!cancelled) setStatus('error'); });
+    function load() {
+      getCallNotes(code)
+        .then(data => {
+          if (cancelled) return;
+          setNotes(data.notes || []);
+          setStatus('done');
+        })
+        .catch(() => { if (!cancelled) setStatus('error'); });
+    }
 
-    return () => { cancelled = true; };
+    load();
+    // ElevenLabs' post-call webhook can land a few seconds after a live
+    // voice call ends, so keep polling for as long as this call is open
+    // rather than requiring the dispatcher to reopen the panel.
+    const t = setInterval(load, 4000);
+    return () => { cancelled = true; clearInterval(t); };
   }, [code]);
 
   if (!code || status === 'idle') return null;
