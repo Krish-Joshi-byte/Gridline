@@ -39,10 +39,12 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
   const [manualText, setManualText] = useState('');
   const scrollRef = useRef(null);
 
-  // A citizen-report call never had a phone line to begin with — just a
-  // location and an optional note submitted through the public page. No
-  // AI voice call to start, nothing for ElevenLabs' post-call webhook to
-  // ever fill in, so that whole slice of the UI just doesn't apply here.
+  // A citizen-report call's phone line, if any, was already used on the
+  // public report page — the citizen called from there, not from here.
+  // So this console never gets a "Start voice call" button for one (there's
+  // no one to dial), but it can still have real AI call notes once that
+  // call ends, same as any other call, which is why CallNotesPanel below
+  // is no longer gated on this flag.
   const isCitizenReport = call.source === 'citizen';
 
   // Real voice conversation with the ElevenLabs Conversational AI agent —
@@ -329,11 +331,9 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         </button>
       </div>
 
-      {!isCitizenReport && (
-        <div style={{ maxHeight: 140, overflowY: 'auto', padding: '0 4px 8px', flexShrink: 0 }}>
-          <CallNotesPanel code={call.code} />
-        </div>
-      )}
+      <div style={{ maxHeight: 140, overflowY: 'auto', padding: '0 4px 8px', flexShrink: 0 }}>
+        <CallNotesPanel code={call.code} />
+      </div>
     </div>
   );
 }

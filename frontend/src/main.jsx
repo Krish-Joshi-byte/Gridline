@@ -16,7 +16,13 @@ const isCitizenPage = window.location.pathname.replace(/\/+$/, '') === '/report'
 function Root() {
   const [view, setView] = useState('start'); // start | citizen | operator
 
-  if (view === 'citizen') return <CitizenApp />;
+  if (view === 'citizen') {
+    return (
+      <ConversationProvider>
+        <CitizenApp />
+      </ConversationProvider>
+    );
+  }
 
   if (view === 'operator') {
     return (
@@ -36,6 +42,10 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {isCitizenPage ? <CitizenApp /> : <Root />}
+    {isCitizenPage ? (
+      <ConversationProvider>
+        <CitizenApp />
+      </ConversationProvider>
+    ) : <Root />}
   </React.StrictMode>
 );

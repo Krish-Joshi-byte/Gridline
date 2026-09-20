@@ -26,12 +26,16 @@ public class WebhookController {
     private String webhookSecret;
 
     private final CallNoteStore store;
+    private final CitizenReportStore citizenReports;
+    private final AutoDispatchService autoDispatch;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private static final Pattern CODE_PATTERN = Pattern.compile("\\b\\d{1,2}[A-Z]-[A-Z]\\d\\b");
 
-    public WebhookController(CallNoteStore store) {
+    public WebhookController(CallNoteStore store, CitizenReportStore citizenReports, AutoDispatchService autoDispatch) {
         this.store = store;
+        this.citizenReports = citizenReports;
+        this.autoDispatch = autoDispatch;
     }
 
     @PostMapping(value = "/webhooks/elevenlabs/post-call", consumes = "application/json")
@@ -80,6 +84,31 @@ public class WebhookController {
             transcript
         );
         store.add(note);
+
+        // If this call came from the citizen report page (its code always
+        // starts with "CIT-"), this webhook is the moment the report itself
+        // gets written up — the citizen only shared a location and placed a
+        // call, so the type and description on the dispatcher's board come
+        // from what the AI operator actually heard, not a guess made before
+        // anyone talked to anyone.
+        if (code != null && code.startsWith("CIT-")) {
+            String inferredType = extractType(summary);
+            citizenReports.applyCallSummary(code, inferredType, summary);
+
+            // The AI operator can send a unit live via the dispatch-tool
+            // endpoint mid-call (see ElevenLabsDispatchToolController). This
+            // is the safety net for when it doesn't — either the tool isn't
+            // configured on the agent yet, or it just didn't get called —
+            // so a real citizen call never just sits there with a summary
+            // and no one actually on the way. Default to "police" the same
+            // way the dispatcher board already does for an unclassified
+            // citizen report, since some unit should still respond.
+            String dispatchType = inferredType != null ? inferredType : "police";
+            autoDispatch.dispatchNearestAvailable(code, dispatchType).ifPresentOrElse(
+                r -> System.out.println("Auto-dispatched " + r.unit.unitId + " to " + code + " (fallback, no live tool call)"),
+                () -> System.out.println("Auto-dispatch skipped or unavailable for " + code)
+            );
+        }
 
         System.out.println("Call note stored for " + note.code + " (severity: " + note.severity + ")");
         return ResponseEntity.ok(Map.of("stored", true));
@@ -136,6 +165,19 @@ public class WebhookController {
                 if (m.find()) return m.group();
             }
         }
+        return null;
+    }
+
+    // Best-effort classification so the citizen-report board doesn't sit at
+    // "unsure" forever just because the caller never picked a category
+    // themselves — same rough-keyword approach as extractSeverity below,
+    // not a substitute for a human reading the actual summary.
+    private String extractType(String summary) {
+        if (summary == null) return null;
+        String s = summary.toLowerCase();
+        if (s.matches(".*(fire|smoke|flames|burning).*")) return "fire";
+        if (s.matches(".*(injur|bleeding|unconscious|breath|medical|chest pain|overdose|seizure).*")) return "medical";
+        if (s.matches(".*(break-?in|assault|robbery|weapon|theft|vandalism|suspect|fight).*")) return "police";
         return null;
     }
 

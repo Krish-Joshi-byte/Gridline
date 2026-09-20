@@ -219,6 +219,41 @@ needed.
      dependency, then browsers will prompt for microphone access the
      first time someone clicks "Start voice call".
 
+## Letting the AI operator actually dispatch units
+
+Talking to the AI on the citizen report page's "Call Dispatch" button used
+to only ever produce a transcript and a post-call summary — a human still
+had to read it and click **Dispatch** on the console. Two things changed
+that:
+
+- **Automatic fallback (works with zero extra setup).** Once a citizen call
+  ends, `WebhookController` reads the AI's summary, and if no unit is
+  already responding to that call, it dispatches the nearest available
+  unit of the inferred type itself (defaulting to police if the type
+  couldn't be worked out). This happens a few seconds after the call ends
+  — as soon as ElevenLabs' post-call webhook lands — not live during the
+  conversation.
+- **Live dispatch during the call (optional, needs a dashboard tool).** To
+  have the AI actually commit a unit *while still on the phone* — so it can
+  tell the caller "a cruiser is on its way, about 6 minutes out" — add a
+  **Server Tool** to the same agent in the ElevenLabs dashboard:
+  1. Agent → **Tools** → **Add tool** → **Server**.
+  2. Method `POST`, URL `https://<your-backend>/api/elevenlabs/dispatch-tool`.
+  3. Body parameters: `code` (string, the call's intersection code — tell
+     the agent in its prompt to use the `{{code}}` dynamic variable it
+     already receives) and `unit_type` (string enum: `police`, `fire`,
+     `medical`).
+  4. If you set `ELEVENLABS_TOOL_SECRET` on the backend, add a header on
+     the tool named `x-gridline-tool-secret` with that same value.
+  5. In the agent's system prompt, tell it to call this tool once it has
+     confirmed the emergency type and location, and to relay whatever the
+     tool responds with (`dispatched`, `unitId`/`callsign`, `etaMinutes`,
+     or a `reason` it wasn't sent) back to the caller.
+
+  Either way, the fallback still runs after the call ends — it just skips
+  itself if the live tool already sent someone, so calls never end up with
+  two units committed.
+
 ## Citizen report page
 
 `/report` is a second, completely separate frontend page for the public —
