@@ -85,7 +85,7 @@ export default function VolunteerAdmin({ events, error, onRetry, onChanged, onVi
 
   async function toggleInvite(evt) {
     if (invite && invite.eventId === evt.id) { setInvite(null); return; }
-    const text = buildInviteText(evt, window.location.origin);
+    const text = buildInviteText(evt, `${window.location.origin}/volunteer`);
     setInvite({ eventId: evt.id, text, copied: false });
     try {
       await navigator.clipboard.writeText(text);

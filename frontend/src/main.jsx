@@ -4,32 +4,31 @@ import { ConversationProvider } from '@elevenlabs/react';
 import App from './App.jsx';
 import CitizenApp from './CitizenApp.jsx';
 import StartScreen from './StartScreen.jsx';
-import UserHub from './UserHub.jsx';
 import OperatorHub from './OperatorHub.jsx';
 import ScanDashboard from './ScanDashboard.jsx';
 import VolunteerPage from './VolunteerPage.jsx';
 import { signOutOperator } from './auth.js';
 import './styles.css';
 
-// `/report` stays a direct, standalone link to the citizen page (e.g. for
-// flyers/QR codes) — it never shows the picker or the operator gate.
-// Everything else (including `/`) lands on the shared start screen, which is
-// the very first fork: User or Operator.
-//
-// Picking "User" opens the user hub — a menu of the two user-side pages:
-//   userHub    the menu itself
-//   citizen    report-an-emergency (App's CitizenApp, no sign-in)
-//   community  the same volunteer feed operators publish to, read-only —
-//              a user can browse posts but not publish, edit or sign up
-//
-// Picking "Operator" asks for the password and, once it passes, opens the
+// `/report` and `/volunteer` stay direct, standalone links (e.g. for flyers/QR
+// codes) — neither ever shows the picker or the operator gate. Everyone, gated
+// or not, gets to volunteer sign-up; only the password gate guards the
+// dispatcher console, scan studio, and post management.
+// Everything else (including `/`) lands on the shared start screen. From there
+// "Operator Console" asks for the password and, once it passes, opens the
 // operator hub — a menu of the three operator-side pages:
+//
 //   hub        the menu itself
 //   operator   the dispatcher console (App.jsx)
 //   scan       Gridline Scan, floor plan -> 3D model (ScanDashboard.jsx)
-//   volunteer  community volunteer posts and sign-ups, full read/write
-//              (VolunteerPage.jsx)
-const isCitizenPage = window.location.pathname.replace(/\/+$/, '') === '/report';
+//   volunteer  staff-side: publish posts, manage sign-ups (VolunteerPage.jsx, mode="operator")
+//
+// The public volunteer feed (mode="public", sign-up enabled, no password) is
+// reachable two ways: the direct `/volunteer` link, and the "Volunteer" card
+// on the shared start screen — both render the same standalone page below.
+const path = window.location.pathname.replace(/\/+$/, '');
+const isCitizenPage = path === '/report';
+const isPublicVolunteerPage = path === '/volunteer';
 
 // Wraps a screen that has to survive the operator going back to the hub.
 // Hidden with display:none rather than unmounted, so the dispatcher console
@@ -43,7 +42,7 @@ function KeepAlive({ active, children }) {
 }
 
 function Root() {
-  // start | userHub | citizen | community | hub | operator | scan | volunteer
+  // start | citizen | volunteer-public | hub | operator | scan | volunteer
   const [view, setView] = useState('start');
   // Which keep-alive screens have been opened at least once. They mount on
   // first visit and stay mounted until sign-out.
@@ -77,31 +76,23 @@ function Root() {
   if (view === 'citizen') {
     return (
       <ConversationProvider>
-        <CitizenApp onBack={() => setView('userHub')} />
+        <CitizenApp onBack={() => setView('start')} />
       </ConversationProvider>
     );
   }
 
-  if (view === 'community') {
-    // Same feed operators see, but read-only: no "Manage posts" tab and no
-    // sign-up — a user can look, not touch.
-    return <VolunteerPage onBack={() => setView('userHub')} readOnly />;
+  // No password for this one — residents sign up without a gate, same as
+  // reporting an emergency.
+  if (view === 'volunteer-public') {
+    return <VolunteerPage mode="public" onBack={() => setView('start')} />;
   }
 
   if (view === 'start') {
     return (
       <StartScreen
-        onSelectUser={() => setView('userHub')}
+        onSelectCitizen={() => setView('citizen')}
+        onSelectVolunteer={() => setView('volunteer-public')}
         onSelectOperator={() => go('hub')}
-      />
-    );
-  }
-
-  if (view === 'userHub') {
-    return (
-      <UserHub
-        onSelect={next => setView(next)}
-        onBack={() => setView('start')}
       />
     );
   }
@@ -110,7 +101,7 @@ function Root() {
   return (
     <>
       {view === 'hub' && <OperatorHub onSelect={go} onSignOut={signOut} />}
-      {view === 'volunteer' && <VolunteerPage onBack={() => go('hub')} />}
+      {view === 'volunteer' && <VolunteerPage mode="operator" onBack={() => go('hub')} />}
 
       {opened.operator && (
         <KeepAlive active={view === 'operator'}>
@@ -128,12 +119,22 @@ function Root() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    {isCitizenPage ? (
+function renderTopLevel() {
+  if (isCitizenPage) {
+    return (
       <ConversationProvider>
         <CitizenApp />
       </ConversationProvider>
-    ) : <Root />}
+    );
+  }
+  if (isPublicVolunteerPage) {
+    return <VolunteerPage mode="public" />;
+  }
+  return <Root />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    {renderTopLevel()}
   </React.StrictMode>
 );

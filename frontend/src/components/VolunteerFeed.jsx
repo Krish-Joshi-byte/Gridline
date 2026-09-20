@@ -7,9 +7,9 @@ import { whenWhere } from '../volunteer.js';
 // Fire, filterable by department and category, with Sign up on every post that
 // still has room.
 //
-// `readOnly` is the user-side "Community" view: browsing and filtering still
-// work, but there's no Sign up button and so no sign-up modal — viewing only,
-// no way to add or change anything on the page.
+// readOnly drops the Sign up button entirely (used for the operator's preview
+// of the feed — staff publish and manage posts, but signing up is a resident
+// action that happens on the public page, not the console).
 export default function VolunteerFeed({ events, error, onRetry, onSignedUp, readOnly = false }) {
   const [factionPick, setFactionPick] = useState('All');
   const [categoryPick, setCategoryPick] = useState('All');
@@ -111,7 +111,11 @@ export default function VolunteerFeed({ events, error, onRetry, onSignedUp, read
                     <span className="vol-spots" data-full={full ? '' : undefined}>
                       {full ? 'Full' : <><strong>{evt.remaining}</strong> of {evt.capacity} spots open</>}
                     </span>
-                    {!readOnly && (
+                    {readOnly ? (
+                      <span className="vol-btn" data-variant="ghost" aria-disabled="true" title="Sign-ups happen on the public volunteer page, not the operator console">
+                        Preview only
+                      </span>
+                    ) : (
                       <button className="vol-btn" data-variant="primary" disabled={full} onClick={() => setSignupFor(evt)}>
                         {full ? 'Full' : 'Sign up'}
                       </button>

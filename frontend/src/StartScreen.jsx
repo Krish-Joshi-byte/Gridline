@@ -2,19 +2,17 @@ import { useState } from 'react';
 import { AUTH_KEY } from './auth.js';
 import HomeShell from './components/HomeShell.jsx';
 import HomeCard from './components/HomeCard.jsx';
-import { PeopleIcon, ConsoleIcon, LockIcon } from './components/HomeIcons.jsx';
+import { PinIcon, ConsoleIcon, LockIcon, PeopleIcon } from './components/HomeIcons.jsx';
 
 const OPERATOR_PASSWORD = 'adm1n';
 
-// Shared landing screen for both the public/user side and the operator side.
-// This is the very first fork: "User" or "Operator" — nothing else. Picking
-// "User" hands off to the user hub, where the report and community pages are
-// chosen. Picking "Operator" doesn't hand over anything itself — it drops
-// into a password gate first, and only a correct password (checked
+// Shared landing screen for both the public citizen-report flow and the
+// operator side. Picking "Operator" doesn't hand over anything itself — it
+// drops into a password gate first, and only a correct password (checked
 // client-side, same as any other demo-grade gate) lets the parent move on to
 // the operator hub, where the dispatch console, scan dashboard and volunteer
 // page are chosen.
-export default function StartScreen({ onSelectUser, onSelectOperator }) {
+export default function StartScreen({ onSelectCitizen, onSelectVolunteer, onSelectOperator }) {
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -42,24 +40,32 @@ export default function StartScreen({ onSelectUser, onSelectOperator }) {
   }
 
   return (
-    <HomeShell maxWidth={showPasswordForm ? 420 : 860}>
+    <HomeShell maxWidth={showPasswordForm ? 420 : 1060}>
       {!showPasswordForm ? (
         <>
           <div className="gl-head">
             <h1 className="gl-h1">Choose how you'd like to continue.</h1>
           </div>
 
-          <div className="gl-grid" style={{ '--cols': 2 }}>
+          <div className="gl-grid" style={{ '--cols': 3 }}>
             <HomeCard
-              tone="accent"
-              icon={<PeopleIcon />}
+              tone="danger"
+              icon={<PinIcon />}
               tag="NO SIGN-IN"
-              title="User"
-              desc="Report an emergency or browse community volunteer posts."
-              onClick={onSelectUser}
+              title="Report an Emergency"
+              desc="Send your location and a short description straight to dispatch."
+              onClick={onSelectCitizen}
             />
             <HomeCard
-              tone="neutral"
+              tone="status"
+              icon={<PeopleIcon />}
+              tag="NO SIGN-IN"
+              title="Community Volunteering"
+              desc="Browse opportunities from Police, Fire, and EMS and sign up."
+              onClick={onSelectVolunteer}
+            />
+            <HomeCard
+              tone="accent"
               icon={<ConsoleIcon />}
               tag="PASSWORD"
               title="Operator Console"
