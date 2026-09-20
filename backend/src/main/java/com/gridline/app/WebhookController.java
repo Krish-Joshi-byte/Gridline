@@ -44,14 +44,23 @@ public class WebhookController {
             @RequestHeader(value = "elevenlabs-signature", required = false) String signatureHeader
     ) throws Exception {
 
+        // Logged unconditionally, before any check that could reject or skip
+        // the request, so "nothing in the logs" reliably means "ElevenLabs
+        // never reached this endpoint" rather than "it arrived and got
+        // silently rejected/ignored somewhere below."
+        System.out.println("Received ElevenLabs webhook POST (" + rawBody.length() + " bytes), signature header present: " + (signatureHeader != null));
+
         if (!verifySignature(rawBody, signatureHeader)) {
+            System.out.println("Rejected: signature did not verify (check ELEVENLABS_WEBHOOK_SECRET matches the secret configured on the webhook in the ElevenLabs dashboard)");
             return ResponseEntity.status(401).body(Map.of("error", "invalid signature"));
         }
 
         JsonNode root = mapper.readTree(rawBody);
         String type = root.path("type").asText("");
+        System.out.println("Webhook type: " + type);
 
         if (!"post_call_transcription".equals(type)) {
+            System.out.println("Ignored: not a post_call_transcription event");
             return ResponseEntity.ok(Map.of("ignored", true));
         }
 
