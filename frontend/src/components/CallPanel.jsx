@@ -39,6 +39,12 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
   const [manualText, setManualText] = useState('');
   const scrollRef = useRef(null);
 
+  // A citizen-report call never had a phone line to begin with — just a
+  // location and an optional note submitted through the public page. No
+  // AI voice call to start, nothing for ElevenLabs' post-call webhook to
+  // ever fill in, so that whole slice of the UI just doesn't apply here.
+  const isCitizenReport = call.source === 'citizen';
+
   // Real voice conversation with the ElevenLabs Conversational AI agent —
   // replaces clicking through the canned Q&A when you actually want to
   // talk (as the caller) instead of texting through the script. Each
@@ -156,40 +162,42 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
           }}>✕</button>
         </div>
         <div style={{ marginTop: 10, fontSize: 11, color: 'var(--status)' }}>
-          LINE 1 · CONNECTED {formatClock(connected)}
+          {isCitizenReport ? 'REPORT OPEN' : 'LINE 1 · CONNECTED'} {formatClock(connected)}
         </div>
 
-        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-          {conversation.status === 'connected' ? (
-            <button
-              onClick={takeOverCall}
-              title="Ends the AI's mic and voice — you'll continue the call yourself"
-              style={{
-                flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
-                background: 'transparent', color: 'var(--danger, #e5484d)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
-              }}
-            >🧑‍✈️ Take over from AI {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
-          ) : (
-            <>
-              <button
-                onClick={startVoiceCall}
-                disabled={conversation.status === 'connecting'}
-                style={{
-                  flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
-                  background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
-                  cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
-                }}
-              >🎙 {conversation.status === 'connecting' ? 'Connecting…' : (hadVoiceCall ? 'Resume AI on this call' : 'Start voice call')}</button>
-            </>
-          )}
-        </div>
-        {hadVoiceCall && conversation.status !== 'connected' && (
-          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-muted)' }}>
-            You've taken over — the AI is off the line. Talk to the caller directly and log it below, or resume the AI above.
-          </div>
-        )}
-        {voiceError && (
-          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger, #e5484d)' }}>{voiceError}</div>
+        {!isCitizenReport && (
+          <>
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+              {conversation.status === 'connected' ? (
+                <button
+                  onClick={takeOverCall}
+                  title="Ends the AI's mic and voice — you'll continue the call yourself"
+                  style={{
+                    flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--danger, #e5484d)',
+                    background: 'transparent', color: 'var(--danger, #e5484d)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer'
+                  }}
+                >🧑‍✈️ Take over from AI {conversation.isSpeaking ? '· AI speaking' : '· listening'}</button>
+              ) : (
+                <button
+                  onClick={startVoiceCall}
+                  disabled={conversation.status === 'connecting'}
+                  style={{
+                    flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--accent)',
+                    background: 'var(--accent-tint)', color: 'var(--accent)', fontWeight: 700, fontSize: 12.5,
+                    cursor: conversation.status === 'connecting' ? 'wait' : 'pointer'
+                  }}
+                >🎙 {conversation.status === 'connecting' ? 'Connecting…' : (hadVoiceCall ? 'Resume AI on this call' : 'Start voice call')}</button>
+              )}
+            </div>
+            {hadVoiceCall && conversation.status !== 'connected' && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-muted)' }}>
+                You've taken over — the AI is off the line. Talk to the caller directly and log it below, or resume the AI above.
+              </div>
+            )}
+            {voiceError && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger, #e5484d)' }}>{voiceError}</div>
+            )}
+          </>
         )}
       </div>
 
@@ -207,15 +215,16 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         ))}
       </div>
 
-      {/* remaining questions — scripted fallback for when you're not using the mic */}
-      {(hadVoiceCall || remaining.length > 0) && conversation.status !== 'connected' && (
+      {/* remaining questions — scripted fallback for when you're not using the mic;
+          for a citizen report there are no scripted questions, just the log box below */}
+      {(isCitizenReport || hadVoiceCall || remaining.length > 0) && conversation.status !== 'connected' && (
         <div style={{ padding: '8px 14px', borderTop: '1px solid var(--line)' }}>
-          {hadVoiceCall && (
+          {(isCitizenReport || hadVoiceCall) && (
             <form onSubmit={sendManualMessage} style={{ display: 'flex', gap: 6, marginBottom: remaining.length > 0 ? 10 : 0 }}>
               <input
                 value={manualText}
                 onChange={e => setManualText(e.target.value)}
-                placeholder="Type what you're telling the caller…"
+                placeholder={isCitizenReport ? 'Log a note on this call…' : "Type what you're telling the caller…"}
                 style={{
                   flex: 1, height: 32, borderRadius: 8, border: '1px solid var(--line-strong)',
                   background: 'var(--surface-2)', color: 'var(--ink)', fontSize: 12.5, padding: '0 10px'
@@ -320,9 +329,11 @@ export default function CallPanel({ call, allResponders, unitsForCall, onClose, 
         </button>
       </div>
 
-      <div style={{ maxHeight: 140, overflowY: 'auto', padding: '0 4px 8px', flexShrink: 0 }}>
-        <CallNotesPanel code={call.code} />
-      </div>
+      {!isCitizenReport && (
+        <div style={{ maxHeight: 140, overflowY: 'auto', padding: '0 4px 8px', flexShrink: 0 }}>
+          <CallNotesPanel code={call.code} />
+        </div>
+      )}
     </div>
   );
 }

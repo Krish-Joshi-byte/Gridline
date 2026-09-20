@@ -219,6 +219,40 @@ needed.
      dependency, then browsers will prompt for microphone access the
      first time someone clicks "Start voice call".
 
+## Citizen report page
+
+`/report` is a second, completely separate frontend page for the public —
+distinct from the dispatcher console at `/`. It shares the API server but
+none of the console's UI or data:
+
+- It can only **send** a location (plus an optional emergency type and a
+  short note) and **update** that same location later if the person
+  moves. It never fetches responder positions, stations, beats, or any
+  other call — those API calls simply aren't in its code, so there's
+  nothing there to leak even by inspecting network traffic.
+- The dispatcher console polls `GET /api/citizen-reports` every few
+  seconds and adds any new one straight into the active call queue —
+  it shows up like any other call, with the caller's real submitted
+  location (not a random or snapped-to-nearest-intersection point).
+  There's no "Start voice call" control on these (no phone line exists
+  to bridge), just a free-text box to log what's said, same dispatch
+  controls as every other call.
+- New endpoints: `POST /api/citizen-reports` (create), `POST
+  /api/citizen-reports/{id}/location` (update after moving), `GET
+  /api/citizen-reports` (dispatcher poll — the citizen page itself
+  never calls this).
+
+Try it locally at `http://localhost:5173/report` in one tab while the
+dispatcher console runs in another, on duty, at `http://localhost:5173/`.
+
+**Worth knowing before this goes anywhere beyond a demo:** like every
+other endpoint in this project, `GET /api/citizen-reports` has no
+authentication — the citizen-facing *page* never calls it, but the
+*endpoint* itself would answer anyone who requested it directly. Put an
+API key or session check in front of it before treating "citizens can't
+see each other's reports" as an actual security property rather than a
+UI-level one.
+
 ## Known shortcuts for the demo
 
 - All state (responders, call notes) lives in memory on the backend and

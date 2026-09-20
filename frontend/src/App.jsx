@@ -6,12 +6,46 @@ import FleetPanel from './components/FleetPanel.jsx';
 import { generateCallQueue } from './calls.js';
 import {
   getIntersections, getResponders, getMapConfig, getStations, getBeats,
-  dispatch as dispatchCall, arrive, clearUnit, syncPositions
+  dispatch as dispatchCall, arrive, clearUnit, syncPositions, getCitizenReports
 } from './api.js';
 import { fetchDrivingRoute, makePathInterpolator } from './routing.js';
 import { createPatrolEngine } from './patrol.js';
 
 const FALLBACK_CENTER = { centerLat: 37.2296, centerLng: -80.4139, cityName: 'Blacksburg, VA', zip: '24060' };
+
+const CITIZEN_TITLE = {
+  police: 'Citizen Report — Police Needed',
+  fire: 'Citizen Report — Fire',
+  medical: 'Citizen Report — Medical'
+};
+
+// Turns a row from GET /api/citizen-reports into the same shape every
+// other call in the queue already has, so CallPanel, the map pin, and
+// dispatch all work on it without knowing it came from the public page
+// rather than the simulated queue. `source: 'citizen'` is the only tell —
+// CallPanel uses it to hide the voice-call controls (there's no phone
+// line to bridge here, just a location and an optional note) and the AI
+// call-notes panel (ElevenLabs never touched this call).
+function citizenReportToCall(report) {
+  return {
+    id: `citizen-${report.id}`,
+    source: 'citizen',
+    title: CITIZEN_TITLE[report.type] || 'Citizen-Reported Emergency',
+    type: ['police', 'fire', 'medical'].includes(report.type) ? report.type : 'police',
+    opening: report.message || 'Shared their location through the citizen report page.',
+    questions: [],
+    code: report.code,
+    locationName: report.locationName || `${report.lat.toFixed(4)}, ${report.lng.toFixed(4)}`,
+    lat: report.lat,
+    lng: report.lng,
+    caller: 'Citizen Report',
+    status: 'waiting',
+    transcript: [
+      { from: 'dispatcher', text: '📍 Citizen shared their location through the report page.' },
+      ...(report.message ? [{ from: 'caller', text: report.message }] : [])
+    ]
+  };
+}
 
 // How long a unit works a call before it clears itself back into service. Real
 // scene times vary wildly; this keeps the demo board from silting up with units
@@ -89,6 +123,31 @@ export default function App() {
     Object.values(clearTimersRef.current).forEach(clearTimeout);
     clearTimersRef.current = {};
   }, []);
+
+  // Picks up reports submitted through the separate /report page. Only
+  // while on duty — same as the simulated queue, a report just sits
+  // server-side until someone's on the board to see it.
+  useEffect(() => {
+    if (!onDuty) return;
+    let cancelled = false;
+
+    function poll() {
+      getCitizenReports().then(reports => {
+        if (cancelled || !reports.length) return;
+        setQueue(q => {
+          const existingIds = new Set(q.map(c => c.id));
+          const additions = reports
+            .filter(r => !existingIds.has(`citizen-${r.id}`))
+            .map(citizenReportToCall);
+          return additions.length ? [...additions, ...q] : q;
+        });
+      }).catch(() => {});
+    }
+
+    poll();
+    const t = setInterval(poll, 4000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [onDuty]);
 
   // The server is authoritative for *state* (who's committed, who's free); the
   // patrol engine is authoritative for *position* of anything not on a call.

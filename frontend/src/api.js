@@ -102,3 +102,38 @@ export async function getCallNotes(code) {
   if (!res.ok) throw new Error('Failed to load call notes');
   return res.json();
 }
+
+// --- Citizen report page -----------------------------------------------
+// These three are the entire surface the public report page touches. It
+// never calls getResponders/getStations/getBeats/getIntersections, so it
+// has nothing to leak even if someone reads its network traffic.
+
+export async function submitCitizenReport({ lat, lng, type, message }) {
+  const res = await fetch(`${API_BASE}/api/citizen-reports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lng, type, message })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not send your location');
+  return data;
+}
+
+export async function updateCitizenReportLocation(id, lat, lng) {
+  const res = await fetch(`${API_BASE}/api/citizen-reports/${encodeURIComponent(id)}/location`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lng })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not update your location');
+  return data;
+}
+
+// Dispatcher-side only: polled from App.jsx to pull new citizen reports
+// onto the call board. The citizen page itself never calls this.
+export async function getCitizenReports() {
+  const res = await fetch(`${API_BASE}/api/citizen-reports`);
+  if (!res.ok) throw new Error('Failed to load citizen reports');
+  return res.json();
+}
