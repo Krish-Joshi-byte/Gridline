@@ -288,10 +288,115 @@ API key or session check in front of it before treating "citizens can't
 see each other's reports" as an actual security property rather than a
 UI-level one.
 
+## Operator hub and the Scan dashboard
+
+The start screen still offers the same two choices. **Operator Console** still
+asks for the password, but it no longer drops straight into the dispatcher
+console — it opens the **operator hub**, a menu of three pages:
+
+| Card | What it opens | Where it lives |
+|---|---|---|
+| Operator Dashboard | the dispatch console, unchanged | `src/App.jsx` |
+| Scan Dashboard | Gridline Scan — floor plan in, walkable 3D model out | `src/ScanDashboard.jsx` + `public/scan/gridline-studio.html` |
+| Volunteer | community volunteer posts (Police / EMS / Fire) and sign-ups | `src/VolunteerPage.jsx` + `src/components/Volunteer*.jsx` |
+
+The start screen, hub and volunteer page share one look, taken from the
+dispatcher console: `src/components/HomeShell.jsx` (top bar, map-toned canvas with a
+faint grid and a slow location "ping", status strip), `HomeCard.jsx` (the destination
+cards) and `src/home.css`. All colours come from the variables in `styles.css`, so a
+change there restyles the dashboard and the home pages together. Red means emergency,
+blue means operator tooling. The ping respects `prefers-reduced-motion`.
+
+Routing is the `view` state in `src/main.jsx`
+(`start | citizen | hub | operator | scan | volunteer`). Every page behind the
+hub has a **‹ Menu** button; the hub has **Sign out**, which clears the password
+flag and returns to the start screen.
+
+**Leaving a page doesn't reset it.** The operator console and the scan dashboard
+mount on first visit and are then hidden, not destroyed, when you go back to the
+hub — so a dispatcher can check a building model mid-shift without losing their
+call queue, unit assignments, patrol simulation or a live voice call, and the
+scan studio keeps whatever model was loaded. Only **Sign out** tears them down
+(it asks first if a dispatch session is running). Because browsers don't throttle
+a hidden same-origin iframe, `ScanDashboard` also parks the studio's animation
+loop while it's off-screen (`setFramePaused`) so a hidden 3D scene isn't rendering
+behind the console all shift.
+
+### The Scan dashboard
+
+Gridline Scan is one self-contained HTML file — interface, floor-plan extractor,
+renderer and three.js, **zero network requests**, no backend. It's served as a
+static asset from `public/scan/` and shown in an iframe rather than merged into
+the React app, because it injects global CSS resets and expects to own the whole
+window. Floor plans are read with `FileReader` and processed in the browser tab;
+nothing is uploaded anywhere. The host forces the studio's dark theme
+(`data-theme="dark"`) so it matches the rest of Gridline whatever the OS setting.
+
+**Updating the studio:** it's built in the separate `gridline-scan` project
+(`node frontend/build-studio.js output/gridline-studio.html ...`). Copy the
+resulting `gridline-studio.html` over `frontend/public/scan/gridline-studio.html`
+and redeploy. No React changes are needed — the iframe just loads the new file.
+
+### The Volunteer page
+
+A volunteer program for the police, fire and EMS community-engagement teams,
+merged in from the standalone `precinct-volunteer` app. It has two tabs over the
+same posts (`src/VolunteerPage.jsx`):
+
+- **Community feed** — what residents see: a blog-style feed of posts, each
+  tagged **Police**, **EMS** or **Fire**, filterable by department and category,
+  with an "Urgently need volunteers" banner for featured posts and a **Sign up**
+  button on every post that still has room. Spots count down live; a full post
+  can't be joined and the same email can't join the same post twice.
+- **Manage posts** — what staff use: publish a post (department badge, picture
+  URL, category, date/time, location, capacity), **Feature** it, **Copy invite**
+  (an email/text draft to paste — nothing is sent automatically), see the
+  sign-ups (name, email, phone, notes), or delete it along with its sign-ups.
+
+Backend: `VolunteerController` (`/api/volunteer/*`) over `VolunteerStore`, which
+holds every rule (validation, the capacity check that keeps two people from
+taking the last spot, duplicate-email detection). Frontend calls are in
+`src/api.js`; components are `VolunteerFeed`, `VolunteerAdmin`,
+`VolunteerSignupModal` and `VolunteerBits`, styled by `src/volunteer.css`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/volunteer/events` | All posts, with live `registered` / `remaining` counts |
+| POST | `/api/volunteer/events` | Publish a post (`faction`: `Police` \| `EMS` \| `Fire`) |
+| PATCH | `/api/volunteer/events/{id}` | Partial update, e.g. `{"featured": true}` |
+| DELETE | `/api/volunteer/events/{id}` | Delete a post and its sign-ups |
+| POST | `/api/volunteer/register` | Sign up for a post |
+| GET | `/api/volunteer/registrations?eventId=` | Sign-ups (personal data) |
+
+**Storage.** Unlike the rest of the backend, volunteer data is not in-memory: it
+is written to `events.json` and `registrations.json` after every change and
+reloaded at startup. The folder is `volunteer.data-dir` (env
+`VOLUNTEER_DATA_DIR`, default `./data/volunteer`, git-ignored). Six sample posts
+are created the first time the backend runs with no `events.json`; deleting them
+later does not bring them back. On a host with a disk that is wiped on deploy
+(Render's free tier) set `VOLUNTEER_DATA_DIR` to a persistent volume, or
+sign-ups are lost with every deploy.
+
+**Before this holds real people's details:** the write routes and
+`GET /api/volunteer/registrations` have no server-side authentication (same as
+every other endpoint here), so anyone who can reach the API can publish, delete
+or read volunteers' names, emails and phone numbers directly. The operator
+password only hides the page. Also, the page is only reachable through the
+operator hub, so residents can't use the sign-up flow yet, and the invite draft's
+sign-up link points at the site root — a public route (like `/report`) is the
+missing piece for both.
+
+> **Same caveat as the rest of the operator side:** the password gate is client
+> side and UI-level. `/scan/gridline-studio.html` is a plain public static file,
+> so anyone who knows the URL can open it directly. That's harmless for the
+> studio itself (it holds no data and uploads nothing), but don't treat the gate
+> as access control.
+
 ## Known shortcuts for the demo
 
 - All state (responders, call notes) lives in memory on the backend and
-  resets on restart.
+  resets on restart. (Volunteer posts and sign-ups are the exception — they
+  are written to disk; see "The Volunteer page".)
 - No auth on the API endpoints, and CORS is wide open (`origins = "*"`)
   — fine for a demo, not for anything beyond it.
 - Station addresses are public record, but some coordinates are

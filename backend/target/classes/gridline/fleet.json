@@ -1,0 +1,12 @@
+{
+  "note": "Demo roster. Unit IDs are fictional; the agencies, stations and districts they are tied to are real. Each unit starts at its home station and follows its beat's mode until it is dispatched.",
+  "units": [
+    { "id": "P-16", "callsign": "Blacksburg 16", "type": "police", "agency": "Blacksburg Police Department", "homeStationId": "BPD-HQ", "beatId": "BEAT-1" },
+    { "id": "P-19", "callsign": "Blacksburg 19", "type": "police", "agency": "Blacksburg Police Department", "homeStationId": "BPD-HQ", "beatId": "BEAT-2" },
+    { "id": "P-21", "callsign": "Blacksburg 21", "type": "police", "agency": "Blacksburg Police Department", "homeStationId": "BPD-HQ", "beatId": "BEAT-3" },
+    { "id": "M-04", "callsign": "Medic 4", "type": "medical", "agency": "Blacksburg Volunteer Rescue Squad", "homeStationId": "BVRS-5", "beatId": "EMS-NORTH" },
+    { "id": "M-11", "callsign": "Medic 11", "type": "medical", "agency": "Blacksburg Volunteer Rescue Squad", "homeStationId": "BVRS-5", "beatId": "EMS-SOUTH" },
+    { "id": "F-02", "callsign": "Engine 1", "type": "fire", "agency": "Blacksburg Volunteer Fire Department", "homeStationId": "BVFD-1", "beatId": "FIRE-DIST-1" },
+    { "id": "F-07", "callsign": "Engine 3", "type": "fire", "agency": "Blacksburg Volunteer Fire Department", "homeStationId": "BVFD-3", "beatId": "FIRE-DIST-3" }
+  ]
+}

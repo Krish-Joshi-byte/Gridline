@@ -137,3 +137,51 @@ export async function getCitizenReports() {
   if (!res.ok) throw new Error('Failed to load citizen reports');
   return res.json();
 }
+
+// --- Volunteer page ------------------------------------------------------
+// Everything lives under /api/volunteer. Errors from the backend arrive as
+// { error: "<message>" }; that message is what gets thrown, so the UI can show
+// it as-is ("That email address is already signed up for this opportunity.").
+
+async function volunteerRequest(path, options, fallbackMessage) {
+  const res = await fetch(`${API_BASE}/api/volunteer${path}`, options);
+  let data = null;
+  try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+  if (!res.ok) throw new Error((data && data.error) || fallbackMessage);
+  return data;
+}
+
+const jsonBody = (method, body) => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body)
+});
+
+// Every opportunity, with live `registered` / `remaining` counts.
+export function getVolunteerEvents() {
+  return volunteerRequest('/events', undefined, 'Could not load volunteer posts');
+}
+
+export function createVolunteerEvent(payload) {
+  return volunteerRequest('/events', jsonBody('POST', payload), "Couldn't publish the post.");
+}
+
+// Partial update — e.g. { featured: true }.
+export function updateVolunteerEvent(id, patch) {
+  return volunteerRequest(`/events/${encodeURIComponent(id)}`, jsonBody('PATCH', patch), "Couldn't update that post.");
+}
+
+// Also removes the post's sign-ups.
+export function deleteVolunteerEvent(id) {
+  return volunteerRequest(`/events/${encodeURIComponent(id)}`, { method: 'DELETE' }, "Couldn't delete that post.");
+}
+
+export function registerForVolunteerEvent({ eventId, name, email, phone, notes }) {
+  return volunteerRequest('/register', jsonBody('POST', { eventId, name, email, phone, notes }), 'Something went wrong. Please try again.');
+}
+
+// Names, emails and phone numbers — operator side only. Omit eventId for all.
+export function getVolunteerRegistrations(eventId) {
+  const query = eventId ? `?eventId=${encodeURIComponent(eventId)}` : '';
+  return volunteerRequest(`/registrations${query}`, undefined, 'Could not load sign-ups');
+}

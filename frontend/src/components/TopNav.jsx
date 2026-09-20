@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import BackButton from './BackButton.jsx';
 
 function formatDuration(totalSeconds) {
   const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
@@ -7,7 +8,7 @@ function formatDuration(totalSeconds) {
   return `${h}:${m}:${s}`;
 }
 
-export default function TopNav({ onDuty, onDutySeconds, onToggleDuty, dispatcherName = 'Dispatcher' }) {
+export default function TopNav({ onDuty, onDutySeconds, onToggleDuty, onBack, dispatcherName = 'Dispatcher' }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -17,6 +18,7 @@ export default function TopNav({ onDuty, onDutySeconds, onToggleDuty, dispatcher
   return (
     <div style={{ borderBottom: '1px solid var(--line)', background: '#000000', flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 20px' }}>
+        {onBack && <BackButton onClick={onBack} />}
         <div style={{
           width: 34, height: 34, borderRadius: 8, background: 'var(--surface-2)',
           border: '1px solid var(--line-strong)', display: 'flex', alignItems: 'center',

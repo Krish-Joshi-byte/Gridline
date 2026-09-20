@@ -1,0 +1,97 @@
+/* Report an Emergency page. Sits inside HomeShell, so the top bar, gridded map
+   canvas and status strip come from home.css; this file only adds the pieces
+   unique to the report flow, all from the tokens in styles.css. Written
+   phone-first: 48px tap targets, 16px form text (stops iOS zooming on focus),
+   and dvh-based heights so the mobile browser's collapsing toolbar can't push
+   the End Call button off screen. */
+
+.cz-stack { display: flex; flex-direction: column; gap: 14px; }
+.cz-stack .gl-head { margin-bottom: 4px; }
+
+.cz-notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45;
+  background: var(--warning-tint); border: 1px solid var(--warning); color: var(--warning);
+}
+.cz-notice svg { flex-shrink: 0; margin-top: 1px; }
+
+.cz-panel { position: relative; overflow: hidden; padding: 20px 20px 20px 23px; }
+.cz-panel::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--line-strong); }
+.cz-panel[data-tone='accent']::before { background: var(--accent); }
+.cz-panel[data-tone='status']::before { background: var(--status); }
+.cz-panel[data-tone='danger']::before { background: var(--danger); }
+.cz-panel .gl-panel-head { margin-bottom: 12px; }
+.cz-text { margin: 0 0 16px; font-size: 13.5px; line-height: 1.55; color: var(--ink-secondary); }
+.cz-label { display: block; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; color: var(--ink-secondary); }
+
+/* buttons: the dashboard's tinted-outline buttons, full width and thumb-sized */
+.gl-btn.cz-btn {
+  flex: none; width: 100%; min-height: 48px; padding: 0 16px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  font-size: 14.5px; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.gl-btn.cz-btn[data-tone='status'] { border-color: var(--status); background: var(--status-tint); color: var(--status); }
+.gl-btn.cz-btn[data-tone='danger'] { border-color: var(--danger); background: var(--danger-tint); color: var(--danger); }
+.gl-btn.cz-btn[data-quiet] { min-height: 44px; font-size: 13px; font-weight: 600; }
+.gl-btn.cz-btn[data-ghost] { border-color: transparent; color: var(--ink-muted); }
+.cz-btn + .cz-btn { margin-top: 10px; }
+
+.cz-chip {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 8px;
+  font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere;
+  background: var(--status-tint); color: var(--status);
+}
+.cz-chip svg { flex-shrink: 0; }
+.cz-chip[data-plain] { background: var(--surface-2); color: var(--ink-secondary); }
+.cz-mono { font-family: monospace; color: var(--ink); }
+
+/* help-type picker: 2x2 on phones, one row from tablet up */
+.cz-seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+.cz-seg label { position: relative; display: block; cursor: pointer; }
+.cz-seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.cz-seg span {
+  --k: var(--accent); --k-tint: var(--accent-tint);
+  display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 10px;
+  border-radius: 9px; font-size: 14px; font-weight: 600; text-align: center;
+  border: 1px solid var(--line-strong); background: transparent; color: var(--ink);
+}
+.cz-seg label[data-kind='police'] span { --k: var(--police); --k-tint: rgba(76, 141, 255, 0.14); }
+.cz-seg label[data-kind='fire'] span { --k: var(--fire); --k-tint: rgba(255, 106, 76, 0.14); }
+.cz-seg label[data-kind='medical'] span { --k: var(--medical); --k-tint: rgba(53, 201, 138, 0.14); }
+.cz-seg label[data-kind='unsure'] span { --k: var(--ink-secondary); --k-tint: var(--surface-3); }
+.cz-seg input:checked + span { border-color: var(--k); background: var(--k-tint); color: var(--k); }
+.cz-seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cz-textarea {
+  display: block; width: 100%; min-height: 96px; margin-bottom: 6px; padding: 12px; resize: none;
+  border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-2);
+  color: var(--ink); font-family: inherit; font-size: 16px; line-height: 1.45;
+}
+.cz-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.cz-count { margin-bottom: 16px; font-size: 11px; color: var(--ink-muted); text-align: right; }
+
+/* live call */
+.cz-live { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; font-size: 13px; font-weight: 700; color: var(--status); }
+.cz-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status); }
+.cz-dot[data-wait] { background: var(--warning); animation: blink-dot 1.2s ease-in-out infinite; }
+.cz-log {
+  display: flex; flex-direction: column; gap: 8px; margin: 12px 0 14px; padding: 2px;
+  max-height: clamp(150px, 34dvh, 320px); overflow-y: auto; overscroll-behavior: contain;
+}
+.cz-empty { padding: 10px 0; font-size: 12.5px; color: var(--ink-muted); text-align: center; }
+.cz-bubble {
+  max-width: 88%; padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.4;
+  background: var(--surface-2); color: var(--ink); align-self: flex-start; border-bottom-left-radius: 3px;
+  overflow-wrap: anywhere;
+}
+.cz-bubble[data-you] { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-left-radius: 12px; border-bottom-right-radius: 3px; }
+
+.cz-note { margin-top: 12px; font-size: 12.5px; line-height: 1.45; color: var(--ink-secondary); }
+.cz-done-title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 16px; font-weight: 700; color: var(--status); }
+
+@media (max-width: 760px) {
+  .cz-panel { padding: 18px 16px 18px 19px; }
+}
+@media (min-width: 480px) {
+  .cz-seg { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

@@ -52,7 +52,7 @@ function citizenReportToCall(report) {
 // parked on scene forever, and the dispatcher can always clear one early.
 const ON_SCENE_MS = 90_000;
 
-export default function App() {
+export default function App({ onBack }) {
   const [mapConfig, setMapConfig] = useState(FALLBACK_CENTER);
   const [intersections, setIntersections] = useState([]);
   const [responders, setResponders] = useState([]);
@@ -386,7 +386,7 @@ export default function App() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <TopNav onDuty={onDuty} onDutySeconds={onDutySeconds} onToggleDuty={toggleDuty} />
+      <TopNav onDuty={onDuty} onDutySeconds={onDutySeconds} onToggleDuty={toggleDuty} onBack={onBack} />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* left column */}
