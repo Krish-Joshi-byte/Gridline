@@ -8,7 +8,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 // labels at any zoom level, optional 3D building tilt via right-click drag).
 // Swap the last path segment for 'liberty' (colorful) or 'positron' (light)
 // if you want a different look — all three are OpenFreeMap/no-key.
-const MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 const TYPE_COLOR = { police: '#4c8dff', fire: '#ff6a4c', medical: '#35c98a' };
 const TYPE_ICON = { police: '🚓', fire: '🚒', medical: '🚑' };
