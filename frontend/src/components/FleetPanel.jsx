@@ -29,7 +29,7 @@ const FALLBACK_LABEL = {
   RETURNING: 'Returning to service'
 };
 
-export default function FleetPanel({ responders = [], stations = [], dispatches = {}, onClearUnit }) {
+export default function FleetPanel({ responders = [], stations = [], dispatches = {}, onClearUnit, onRerouteUnit }) {
   const [now, setNow] = useState(Date.now());
 
   // Only ticks while something is actually on scene counting down.
@@ -96,6 +96,17 @@ export default function FleetPanel({ responders = [], stations = [], dispatches 
                     border: '1px solid var(--status)', background: 'var(--status-tint)', color: 'var(--status)'
                   }}
                 >Clear</button>
+              )}
+
+              {dispatch && dispatch.status === 'En route' && onRerouteUnit && (
+                <button
+                  onClick={() => onRerouteUnit(unit.id)}
+                  title="Pull this unit off its current call and free it up for something else"
+                  style={{
+                    height: 24, padding: '0 8px', borderRadius: 6, cursor: 'pointer', fontSize: 10.5, fontWeight: 700,
+                    border: '1px solid var(--warning)', background: 'var(--warning-tint)', color: 'var(--warning)'
+                  }}
+                >Reroute</button>
               )}
             </div>
           );

@@ -324,7 +324,14 @@ export default function MapView({
   }, [ready, activePin]);
 
   return (
-    <div style={{ position: 'relative', height: '100%' }}>
+    // zIndex: 0 here isn't decorative — it's what makes this div its own
+    // stacking context. Without it, `position: relative` alone doesn't
+    // contain descendants: the high z-index values set inline on map
+    // markers below (up to 1000, so unit icons draw over stations) would
+    // otherwise be compared directly against sibling UI like CallPanel
+    // (zIndex 600) and win, drawing vehicle icons on top of the call
+    // panel's text instead of staying confined to the map itself.
+    <div style={{ position: 'relative', height: '100%', zIndex: 0 }}>
       <div style={{
         position: 'absolute', top: 10, left: 10, zIndex: 500, background: 'rgba(10,14,20,0.85)',
         border: '1px solid var(--line-strong)', borderRadius: 8, padding: '5px 12px',

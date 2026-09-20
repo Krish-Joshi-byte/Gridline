@@ -276,6 +276,40 @@ export default function App() {
     clearUnit(unitId, lat, lng).catch(() => {}).finally(refreshResponders);
   }
 
+  // Pulls a unit off whatever it's doing mid-route and frees it immediately,
+  // from wherever it actually is on screen right now — for when a more
+  // emergent call comes in and everything is already dispatched. Unlike
+  // "Clear" (which wraps up a finished scene), this interrupts a unit that's
+  // still driving, so the in-flight route animation has to be torn down too.
+  function rerouteUnit(unitId) {
+    const dispatch = unitDispatches[unitId];
+    const live = responders.find(r => r.id === unitId);
+    const lat = live?.lat ?? dispatch?.targetLat;
+    const lng = live?.lng ?? dispatch?.targetLng;
+
+    if (animRefs.current[unitId]) {
+      cancelAnimationFrame(animRefs.current[unitId]);
+      delete animRefs.current[unitId];
+    }
+    setRoutes(r => {
+      const next = { ...r };
+      delete next[unitId];
+      return next;
+    });
+    clearUnitNow(unitId, lat, lng);
+
+    // If this was the last unit still responding to that call, put it back
+    // to 'waiting' so it doesn't sit there looking handled when nobody's
+    // actually still coming.
+    if (dispatch) {
+      const stillCovered = Object.entries(unitDispatches)
+        .some(([uid, d]) => d.callId === dispatch.callId && uid !== unitId);
+      if (!stillCovered) {
+        setQueue(q => q.map(c => (c.id === dispatch.callId ? { ...c, status: 'waiting' } : c)));
+      }
+    }
+  }
+
   async function dispatchOneUnit(unit, callId) {
     const { unitId, type, startLat, startLng, targetLat, targetLng } = unit;
     let etaSeconds = unit.etaMinutes * 60;
@@ -418,6 +452,7 @@ export default function App() {
             stations={stations}
             dispatches={unitDispatches}
             onClearUnit={clearUnitNow}
+            onRerouteUnit={rerouteUnit}
           />
         </div>
 
