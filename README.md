@@ -1,5 +1,7 @@
 # Gridline — full stack (Java + React)
 
+Operator password is "adm1n"
+
 The complete hackathon build: a Java/Spring Boot backend (intersection
 registry, dispatch logic, responder tracking, and the ElevenLabs
 fallback-call webhook) plus a React frontend (live map, code entry,
